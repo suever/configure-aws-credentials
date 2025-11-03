@@ -126,16 +126,36 @@ export async function getCallerIdentity(client: STSClient): Promise<{ Account: s
 }
 
 // Obtains account ID from STS Client and sets it as output
-export async function exportAccountId(credentialsClient: CredentialsClient, maskAccountId?: boolean) {
-  const identity = await getCallerIdentity(credentialsClient.stsClient);
-  const accountId = identity.Account;
-  const arn = identity.Arn;
+// If providedAccountId is provided, uses it directly without making an STS call
+export async function exportAccountId(
+  credentialsClient: CredentialsClient,
+  maskAccountId?: boolean,
+  providedAccountId?: string,
+) {
+  let accountId: string;
+  let arn: string | undefined;
+
+  if (providedAccountId) {
+    // Use the provided account ID directly
+    accountId = providedAccountId;
+    core.info(`Using provided AWS account ID: ${accountId}`);
+  } else {
+    // Make STS call to retrieve account ID
+    const identity = await getCallerIdentity(credentialsClient.stsClient);
+    accountId = identity.Account;
+    arn = identity.Arn;
+  }
+
   if (maskAccountId) {
     core.setSecret(accountId);
-    core.setSecret(arn);
+    if (arn) {
+      core.setSecret(arn);
+    }
   }
   core.setOutput('aws-account-id', accountId);
-  core.setOutput('authenticated-arn', arn);
+  if (arn) {
+    core.setOutput('authenticated-arn', arn);
+  }
   return accountId;
 }
 

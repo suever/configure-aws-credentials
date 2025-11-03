@@ -29,6 +29,8 @@ export async function run() {
     const sessionTokenInput = core.getInput('aws-session-token', { required: false });
     const SessionToken = sessionTokenInput === '' ? undefined : sessionTokenInput;
     const region = core.getInput('aws-region', { required: true });
+    const accountIdInput = core.getInput('aws-account-id', { required: false });
+    const providedAccountId = accountIdInput === '' ? undefined : accountIdInput;
     const roleToAssume = core.getInput('role-to-assume', { required: false });
     const audience = core.getInput('audience', { required: false });
     const maskAccountId = getBooleanInput('mask-aws-account-id', { required: false });
@@ -164,7 +166,7 @@ export async function run() {
     } else if (!webIdentityTokenFile && !roleChaining) {
       // Proceed only if credentials can be picked up
       await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
-      sourceAccountId = await exportAccountId(credentialsClient, maskAccountId);
+      sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
     }
 
     if (AccessKeyId || roleChaining) {
@@ -172,7 +174,7 @@ export async function run() {
       // This validates cases where this action is using existing environment credentials,
       // and cases where the user intended to provide input credentials but the secrets inputs resolved to empty strings.
       await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
-      sourceAccountId = await exportAccountId(credentialsClient, maskAccountId);
+      sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
     }
 
     // Get role credentials if configured to do so
@@ -213,7 +215,7 @@ export async function run() {
         );
       }
       if (outputEnvCredentials) {
-        await exportAccountId(credentialsClient, maskAccountId);
+        await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
       }
     } else {
       core.info('Proceeding with IAM user credentials');
