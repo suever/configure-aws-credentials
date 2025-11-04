@@ -104,15 +104,23 @@ export function unsetCredentials(outputEnvCredentials?: boolean) {
 }
 
 export function exportRegion(region: string, outputEnvCredentials?: boolean) {
+  core.info(`[exportRegion] Called with region=${region}, outputEnvCredentials=${outputEnvCredentials}`);
   if (outputEnvCredentials) {
+    core.info('[exportRegion] Exporting AWS_DEFAULT_REGION and AWS_REGION environment variables');
     core.exportVariable('AWS_DEFAULT_REGION', region);
     core.exportVariable('AWS_REGION', region);
+    core.info('[exportRegion] Environment variables exported successfully');
+  } else {
+    core.info('[exportRegion] Skipping environment variable export (outputEnvCredentials is false)');
   }
 }
 
 export async function getCallerIdentity(client: STSClient): Promise<{ Account: string; Arn: string; UserId?: string }> {
+  core.info('[getCallerIdentity] Sending GetCallerIdentityCommand to STS');
   const identity = await client.send(new GetCallerIdentityCommand({}));
+  core.info(`[getCallerIdentity] Received response - Account: ${identity.Account}, Arn: ${identity.Arn}, UserId: ${identity.UserId}`);
   if (!identity.Account || !identity.Arn) {
+    core.error('[getCallerIdentity] Response missing Account or ARN');
     throw new Error('Could not get Account ID or ARN from STS. Did you set credentials?');
   }
   const result: { Account: string; Arn: string; UserId?: string } = {
@@ -122,6 +130,7 @@ export async function getCallerIdentity(client: STSClient): Promise<{ Account: s
   if (identity.UserId !== undefined) {
     result.UserId = identity.UserId;
   }
+  core.info(`[getCallerIdentity] Returning result: ${JSON.stringify(result)}`);
   return result;
 }
 
@@ -132,40 +141,47 @@ export async function exportAccountId(
   maskAccountId?: boolean,
   providedAccountId?: string,
 ) {
+  core.info(`[exportAccountId] Called with maskAccountId=${maskAccountId}, providedAccountId=${providedAccountId || 'not provided'}`);
   let accountId: string;
   let arn: string | undefined;
 
   if (providedAccountId) {
     // Use the provided account ID directly
     accountId = providedAccountId;
-    core.info(`Using provided AWS account ID: ${accountId}`);
+    core.info(`[exportAccountId] Using provided AWS account ID: ${accountId}`);
   } else {
     // Make STS call to retrieve account ID
-    core.info('Calling GetCallerIdentity to retrieve account ID');
+    core.info('[exportAccountId] No account ID provided, calling GetCallerIdentity to retrieve it');
     try {
       const identity = await getCallerIdentity(credentialsClient.stsClient);
       accountId = identity.Account;
       arn = identity.Arn;
-      core.info(`GetCallerIdentity successful - Account: ${accountId}, ARN: ${arn}`);
+      core.info(`[exportAccountId] GetCallerIdentity successful - Account: ${accountId}, ARN: ${arn}`);
     } catch (error) {
-      core.error(`GetCallerIdentity failed: ${errorMessage(error)}`);
+      core.error(`[exportAccountId] GetCallerIdentity failed: ${errorMessage(error)}`);
       throw error;
     }
   }
 
   if (maskAccountId) {
-    core.info('Masking account ID and ARN as secrets');
+    core.info('[exportAccountId] Masking account ID and ARN as secrets');
     core.setSecret(accountId);
     if (arn) {
       core.setSecret(arn);
     }
+    core.info('[exportAccountId] Secrets masked successfully');
+  } else {
+    core.info('[exportAccountId] Not masking account ID (maskAccountId is false)');
   }
-  core.info(`Setting output: aws-account-id=${accountId}`);
+  core.info(`[exportAccountId] Setting output: aws-account-id=${accountId}`);
   core.setOutput('aws-account-id', accountId);
   if (arn) {
-    core.info(`Setting output: authenticated-arn=${arn}`);
+    core.info(`[exportAccountId] Setting output: authenticated-arn=${arn}`);
     core.setOutput('authenticated-arn', arn);
+  } else {
+    core.info('[exportAccountId] No ARN available to set as output');
   }
+  core.info(`[exportAccountId] Returning account ID: ${accountId}`);
   return accountId;
 }
 
@@ -256,14 +272,20 @@ export function isDefined<T>(i: T | undefined | null): i is T {
 /* c8 ignore stop */
 
 export async function areCredentialsValid(credentialsClient: CredentialsClient) {
+  core.info('[areCredentialsValid] Checking if existing credentials are valid');
   const client = credentialsClient.stsClient;
   try {
+    core.info('[areCredentialsValid] Sending GetCallerIdentityCommand');
     const identity = await client.send(new GetCallerIdentityCommand({}));
+    core.info(`[areCredentialsValid] Response received - Account: ${identity.Account}`);
     if (identity.Account) {
+      core.info('[areCredentialsValid] Credentials are valid');
       return true;
     }
+    core.info('[areCredentialsValid] No account ID in response, credentials invalid');
     return false;
-  } catch (_) {
+  } catch (error) {
+    core.info(`[areCredentialsValid] GetCallerIdentity failed: ${errorMessage(error)} - credentials invalid`);
     return false;
   }
 }

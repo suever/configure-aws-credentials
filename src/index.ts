@@ -101,27 +101,39 @@ export async function run() {
       }, globalTimeout * 1000);
     }
 
+    core.info('=== Validating Input Configuration ===');
     if (forceSkipOidc && roleToAssume && !AccessKeyId && !webIdentityTokenFile) {
+      core.error('Invalid configuration: force-skip-oidc requires aws-access-key-id or web-identity-token-file');
       throw new Error(
         "If 'force-skip-oidc' is true and 'role-to-assume' is set, 'aws-access-key-id' or 'web-identity-token-file' must be set",
       );
     }
+    core.info('Input configuration validation passed');
 
     if (specialCharacterWorkaround) {
       // 😳
+      core.info('Special character workaround enabled, forcing retry settings');
       disableRetry = false;
       maxRetries = 12;
+      core.info(`Updated retry settings: disableRetry=${disableRetry}, maxRetries=${maxRetries}`);
     } else if (maxRetries < 1) {
+      core.info('maxRetries was less than 1, setting to 1');
       maxRetries = 1;
     }
 
     // Logic to decide whether to attempt to use OIDC or not
+    core.info('=== Determining Authentication Method ===');
     const useGitHubOIDCProvider = () => {
-      if (forceSkipOidc) return false;
+      core.info('Evaluating whether to use GitHub OIDC provider...');
+      if (forceSkipOidc) {
+        core.info('force-skip-oidc is true, skipping OIDC');
+        return false;
+      }
       // The `ACTIONS_ID_TOKEN_REQUEST_TOKEN` environment variable is set when the `id-token` permission is granted.
       // This is necessary to authenticate with OIDC, but not strictly set just for OIDC. If it is not set and all other
       // checks pass, it is likely but not guaranteed that the user needs but lacks this permission in their workflow.
       // So, we will log a warning when it is the only piece absent
+      core.info(`OIDC evaluation - roleToAssume: ${!!roleToAssume}, webIdentityTokenFile: ${!!webIdentityTokenFile}, AccessKeyId: ${!!AccessKeyId}, ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${!!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}, roleChaining: ${!!roleChaining}`);
       if (
         !!roleToAssume &&
         !webIdentityTokenFile &&
@@ -134,38 +146,62 @@ export async function run() {
             'If you are not trying to authenticate with OIDC and the action is working successfully, you can ignore this message.',
         );
       }
-      return (
+      const willUseOIDC = (
         !!roleToAssume &&
         !!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN &&
         !AccessKeyId &&
         !webIdentityTokenFile &&
         !roleChaining
       );
+      core.info(`Will use GitHub OIDC provider: ${willUseOIDC}`);
+      return willUseOIDC;
     };
 
     if (unsetCurrentCredentials) {
+      core.info('=== Unsetting Current Credentials ===');
+      core.info(`Calling unsetCredentials with outputEnvCredentials=${outputEnvCredentials}`);
       unsetCredentials(outputEnvCredentials);
+      core.info('Current credentials unset');
     }
 
+    core.info('=== Validating and Exporting Region ===');
+    core.info(`Validating region: ${region}`);
     if (!region.match(REGION_REGEX)) {
+      core.error(`Region validation failed: ${region} does not match ${REGION_REGEX}`);
       throw new Error(`Region is not valid: ${region}`);
     }
+    core.info('Region validation passed');
+    core.info(`Exporting region with outputEnvCredentials=${outputEnvCredentials}`);
     exportRegion(region, outputEnvCredentials);
+    core.info('Region exported');
 
     // Instantiate credentials client
+    core.info('=== Instantiating Credentials Client ===');
     const clientProps: { region: string; proxyServer?: string; noProxy?: string } = { region };
-    if (proxyServer) clientProps.proxyServer = proxyServer;
-    if (noProxy) clientProps.noProxy = noProxy;
+    if (proxyServer) {
+      core.info(`Adding proxy server to client props: ${proxyServer ? 'configured' : 'none'}`);
+      clientProps.proxyServer = proxyServer;
+    }
+    if (noProxy) {
+      core.info(`Adding no-proxy configuration: ${noProxy}`);
+      clientProps.noProxy = noProxy;
+    }
+    core.info(`Creating CredentialsClient with region=${clientProps.region}, proxyServer=${clientProps.proxyServer || 'none'}, noProxy=${clientProps.noProxy || 'none'}`);
     const credentialsClient = new CredentialsClient(clientProps);
+    core.info('CredentialsClient instantiated successfully');
     let sourceAccountId: string | undefined;
     let webIdentityToken: string;
 
     //if the user wants to attempt to use existing credentials, check if we have some already
     if (useExistingCredentials) {
+      core.info('=== Checking for Existing Valid Credentials ===');
+      core.info('use-existing-credentials is set, checking if credentials are already valid');
       const validCredentials = await areCredentialsValid(credentialsClient);
+      core.info(`Existing credentials valid: ${validCredentials}`);
       if (validCredentials) {
         core.notice('Pre-existing credentials are valid. No need to generate new ones.');
         if (timeoutId) clearTimeout(timeoutId);
+        core.info('Exiting early due to valid existing credentials');
         return;
       }
       core.notice('No valid credentials exist. Running as normal.');
@@ -173,28 +209,40 @@ export async function run() {
 
     // If OIDC is being used, generate token
     // Else, export credentials provided as input
+    core.info('=== Setting Up Authentication Credentials ===');
     if (useGitHubOIDCProvider()) {
+      core.info('Using GitHub OIDC provider to get ID token');
+      core.info(`Audience: ${audience}`);
+      core.info(`Retry enabled: ${!disableRetry}, Max retries: ${maxRetries}`);
       try {
         webIdentityToken = await retryAndBackoff(
           async () => {
+            core.info('Calling core.getIDToken()...');
             return core.getIDToken(audience);
           },
           !disableRetry,
           maxRetries,
         );
+        core.info('Successfully obtained ID token from GitHub OIDC');
       } catch (error) {
+        core.error(`getIDToken call failed: ${errorMessage(error)}`);
         throw new Error(`getIDToken call failed: ${errorMessage(error)}`);
       }
     } else if (AccessKeyId) {
+      core.info('Using provided AWS access key ID and secret access key');
       if (!SecretAccessKey) {
+        core.error('aws-access-key-id was provided but aws-secret-access-key is missing');
         throw new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided");
       }
       // The STS client for calling AssumeRole pulls creds from the environment.
       // Plus, in the assume role case, if the AssumeRole call fails, we want
       // the source credentials to already be masked as secrets
       // in any error messages.
+      core.info(`Exporting credentials - outputCredentials=${outputCredentials}, outputEnvCredentials=${outputEnvCredentials}`);
       exportCredentials({ AccessKeyId, SecretAccessKey, SessionToken }, outputCredentials, outputEnvCredentials);
+      core.info('Credentials exported successfully');
     } else if (!webIdentityTokenFile && !roleChaining) {
+      core.info('Using ambient credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
       // Proceed only if credentials can be picked up
       core.info('Validating credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
       if (!skipCredentialValidation) {

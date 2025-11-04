@@ -17,73 +17,122 @@ const ProxyResolver_1 = __nccwpck_require__(3265);
 const USER_AGENT = 'configure-aws-credentials-for-github-actions';
 class CredentialsClient {
     constructor(props) {
+        (0, core_1.info)('[CredentialsClient.constructor] Initializing CredentialsClient');
+        (0, core_1.info)(`[CredentialsClient.constructor] Props: region=${props.region}, proxyServer=${props.proxyServer || 'none'}, noProxy=${props.noProxy || 'none'}`);
         if (props.region !== undefined) {
             this.region = props.region;
+            (0, core_1.info)(`[CredentialsClient.constructor] Region set to: ${this.region}`);
         }
         if (props.proxyServer) {
-            (0, core_1.info)('Configuring proxy handler for STS client');
+            (0, core_1.info)('[CredentialsClient.constructor] Configuring proxy handler for STS client');
             const proxyOptions = {
                 httpProxy: props.proxyServer,
                 httpsProxy: props.proxyServer,
             };
             if (props.noProxy !== undefined) {
                 proxyOptions.noProxy = props.noProxy;
+                (0, core_1.info)(`[CredentialsClient.constructor] No-proxy configuration: ${props.noProxy}`);
             }
+            (0, core_1.info)(`[CredentialsClient.constructor] Creating ProxyResolver with options: ${JSON.stringify(proxyOptions)}`);
             const getProxyForUrl = new ProxyResolver_1.ProxyResolver(proxyOptions).getProxyForUrl;
             const handler = new proxy_agent_1.ProxyAgent({ getProxyForUrl });
             this.requestHandler = new node_http_handler_1.NodeHttpHandler({
                 httpsAgent: handler,
                 httpAgent: handler,
             });
+            (0, core_1.info)('[CredentialsClient.constructor] Proxy handler configured successfully');
         }
+        (0, core_1.info)('[CredentialsClient.constructor] CredentialsClient initialized');
     }
     get stsClient() {
         if (!this._stsClient) {
+            (0, core_1.info)('[CredentialsClient.stsClient] Creating new STSClient');
             const config = { customUserAgent: USER_AGENT };
-            if (this.region !== undefined)
+            if (this.region !== undefined) {
                 config.region = this.region;
-            if (this.requestHandler !== undefined)
+                (0, core_1.info)(`[CredentialsClient.stsClient] Setting region: ${this.region}`);
+            }
+            if (this.requestHandler !== undefined) {
                 config.requestHandler = this.requestHandler;
+                (0, core_1.info)('[CredentialsClient.stsClient] Using custom request handler (proxy configured)');
+            }
+            (0, core_1.info)(`[CredentialsClient.stsClient] STSClient config: ${JSON.stringify({ customUserAgent: config.customUserAgent, region: config.region, hasRequestHandler: !!config.requestHandler })}`);
             this._stsClient = new client_sts_1.STSClient(config);
+            (0, core_1.info)('[CredentialsClient.stsClient] STSClient created successfully');
+        }
+        else {
+            (0, core_1.info)('[CredentialsClient.stsClient] Returning existing STSClient instance');
         }
         return this._stsClient;
     }
     async validateCredentials(expectedAccessKeyId, roleChaining, expectedAccountIds) {
+        (0, core_1.info)('[CredentialsClient.validateCredentials] ====== Starting Credential Validation ======');
+        (0, core_1.info)(`[CredentialsClient.validateCredentials] Parameters: expectedAccessKeyId=${expectedAccessKeyId ? expectedAccessKeyId.substring(0, 4) + '...' : 'none'}, roleChaining=${roleChaining}, expectedAccountIds=${expectedAccountIds?.join(', ') || 'none'}`);
         let credentials;
         try {
+            (0, core_1.info)('[CredentialsClient.validateCredentials] Loading credentials from AWS SDK');
             credentials = await this.loadCredentials();
+            (0, core_1.info)(`[CredentialsClient.validateCredentials] Credentials loaded from SDK`);
             if (!credentials.accessKeyId) {
+                (0, core_1.info)('[CredentialsClient.validateCredentials] ERROR: Access key ID is empty after loading credentials');
                 throw new Error('Access key ID empty after loading credentials');
             }
+            (0, core_1.info)(`[CredentialsClient.validateCredentials] Credentials loaded successfully (AccessKeyId: ${credentials.accessKeyId.substring(0, 4)}...)`);
         }
         catch (error) {
+            (0, core_1.info)(`[CredentialsClient.validateCredentials] ERROR: Failed to load credentials: ${(0, helpers_1.errorMessage)(error)}`);
             throw new Error(`Credentials could not be loaded, please check your action inputs: ${(0, helpers_1.errorMessage)(error)}`);
         }
         if (expectedAccountIds && expectedAccountIds.length > 0 && expectedAccountIds[0] !== '') {
+            (0, core_1.info)(`[CredentialsClient.validateCredentials] Account ID validation required. Allowed accounts: ${expectedAccountIds.join(', ')}`);
             let callerIdentity;
             try {
+                (0, core_1.info)('[CredentialsClient.validateCredentials] Calling GetCallerIdentity for account validation');
                 callerIdentity = await (0, helpers_1.getCallerIdentity)(this.stsClient);
+                (0, core_1.info)(`[CredentialsClient.validateCredentials] GetCallerIdentity returned account: ${callerIdentity.Account}, ARN: ${callerIdentity.Arn}`);
             }
             catch (error) {
+                (0, core_1.info)(`[CredentialsClient.validateCredentials] ERROR: GetCallerIdentity failed: ${(0, helpers_1.errorMessage)(error)}`);
                 throw new Error(`Could not validate account ID of credentials: ${(0, helpers_1.errorMessage)(error)}`);
             }
             if (!callerIdentity.Account || !expectedAccountIds.includes(callerIdentity.Account)) {
-                throw new Error(`The account ID of the provided credentials (${callerIdentity.Account ?? 'unknown'}) does not match any of the expected account IDs: ${expectedAccountIds.join(', ')}`);
+                const errorMsg = `The account ID of the provided credentials (${callerIdentity.Account ?? 'unknown'}) does not match any of the expected account IDs: ${expectedAccountIds.join(', ')}`;
+                (0, core_1.info)(`[CredentialsClient.validateCredentials] ERROR: ${errorMsg}`);
+                throw new Error(errorMsg);
             }
+            (0, core_1.info)('[CredentialsClient.validateCredentials] Account ID validation successful - account is in allowed list');
+        }
+        else {
+            (0, core_1.info)('[CredentialsClient.validateCredentials] No account ID validation required (expectedAccountIds is empty or not provided)');
         }
         if (!roleChaining) {
+            (0, core_1.info)('[CredentialsClient.validateCredentials] Role chaining is false, validating access key ID');
             const actualAccessKeyId = credentials.accessKeyId;
             if (expectedAccessKeyId && expectedAccessKeyId !== actualAccessKeyId) {
-                throw new Error('Credentials loaded by the SDK do not match the expected access key ID configured by the action');
+                const errorMsg = 'Credentials loaded by the SDK do not match the expected access key ID configured by the action';
+                (0, core_1.info)(`[CredentialsClient.validateCredentials] ERROR: Access key validation failed: expected ${expectedAccessKeyId?.substring(0, 4)}..., got ${actualAccessKeyId.substring(0, 4)}...`);
+                throw new Error(errorMsg);
             }
+            (0, core_1.info)('[CredentialsClient.validateCredentials] Access key ID validation successful');
         }
+        else {
+            (0, core_1.info)('[CredentialsClient.validateCredentials] Role chaining is true, skipping access key ID validation');
+        }
+        (0, core_1.info)('[CredentialsClient.validateCredentials] ====== Credential Validation Completed Successfully ======');
     }
     async loadCredentials() {
+        (0, core_1.info)('[CredentialsClient.loadCredentials] Loading credentials from AWS SDK');
         const config = {};
-        if (this.requestHandler !== undefined)
+        if (this.requestHandler !== undefined) {
             config.requestHandler = this.requestHandler;
+            (0, core_1.info)('[CredentialsClient.loadCredentials] Using custom request handler');
+        }
+        (0, core_1.info)('[CredentialsClient.loadCredentials] Creating temporary STSClient for credential loading');
         const client = new client_sts_1.STSClient(config);
-        return client.config.credentials();
+        (0, core_1.info)('[CredentialsClient.loadCredentials] Calling client.config.credentials()');
+        const creds = await client.config.credentials();
+        (0, core_1.info)(`[CredentialsClient.loadCredentials] Credentials loaded - AccessKeyId: ${creds.accessKeyId?.substring(0, 4)}..., hasSessionToken: ${!!creds.sessionToken}`);
+        return creds;
     }
 }
 exports.CredentialsClient = CredentialsClient;
@@ -215,26 +264,37 @@ const helpers_1 = __nccwpck_require__(2918);
 async function assumeRoleWithOIDC(params, client, webIdentityToken) {
     delete params.Tags;
     core.info('Assuming role with OIDC');
+    core.info(`Role ARN: ${params.RoleArn}`);
+    core.info(`Session Name: ${params.RoleSessionName}`);
+    core.info(`Duration: ${params.DurationSeconds}`);
     try {
         const creds = await client.send(new client_sts_1.AssumeRoleWithWebIdentityCommand({
             ...params,
             WebIdentityToken: webIdentityToken,
         }));
+        core.info(`AssumeRoleWithWebIdentity successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
         return creds;
     }
     catch (error) {
+        core.error(`AssumeRoleWithWebIdentity failed: ${(0, helpers_1.errorMessage)(error)}`);
+        core.error(`Role ARN: ${params.RoleArn}`);
         throw new Error(`Could not assume role with OIDC: ${(0, helpers_1.errorMessage)(error)}`);
     }
 }
 async function assumeRoleWithWebIdentityTokenFile(params, client, webIdentityTokenFile, workspace) {
-    core.debug('webIdentityTokenFile provided. Will call sts:AssumeRoleWithWebIdentity and take session tags from token contents.');
+    core.info('webIdentityTokenFile provided. Will call sts:AssumeRoleWithWebIdentity and take session tags from token contents.');
     const webIdentityTokenFilePath = node_path_1.default.isAbsolute(webIdentityTokenFile)
         ? webIdentityTokenFile
         : node_path_1.default.join(workspace, webIdentityTokenFile);
+    core.info(`Web identity token file path: ${webIdentityTokenFilePath}`);
     if (!node_fs_1.default.existsSync(webIdentityTokenFilePath)) {
+        core.error(`Web identity token file does not exist: ${webIdentityTokenFilePath}`);
         throw new Error(`Web identity token file does not exist: ${webIdentityTokenFilePath}`);
     }
     core.info('Assuming role with web identity token file');
+    core.info(`Role ARN: ${params.RoleArn}`);
+    core.info(`Session Name: ${params.RoleSessionName}`);
+    core.info(`Duration: ${params.DurationSeconds}`);
     try {
         const webIdentityToken = node_fs_1.default.readFileSync(webIdentityTokenFilePath, 'utf8');
         delete params.Tags;
@@ -242,19 +302,31 @@ async function assumeRoleWithWebIdentityTokenFile(params, client, webIdentityTok
             ...params,
             WebIdentityToken: webIdentityToken,
         }));
+        core.info(`AssumeRoleWithWebIdentity successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
         return creds;
     }
     catch (error) {
+        core.error(`AssumeRoleWithWebIdentity (token file) failed: ${(0, helpers_1.errorMessage)(error)}`);
+        core.error(`Role ARN: ${params.RoleArn}`);
+        core.error(`Token file path: ${webIdentityTokenFilePath}`);
         throw new Error(`Could not assume role with web identity token file: ${(0, helpers_1.errorMessage)(error)}`);
     }
 }
 async function assumeRoleWithCredentials(params, client) {
     core.info('Assuming role with user credentials');
+    core.info(`Role ARN: ${params.RoleArn}`);
+    core.info(`Session Name: ${params.RoleSessionName}`);
+    core.info(`Duration: ${params.DurationSeconds}`);
+    core.info(`External ID: ${params.ExternalId || 'not provided'}`);
     try {
         const creds = await client.send(new client_sts_1.AssumeRoleCommand({ ...params }));
+        core.info(`AssumeRole successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
         return creds;
     }
     catch (error) {
+        core.error(`AssumeRole failed: ${(0, helpers_1.errorMessage)(error)}`);
+        core.error(`Role ARN: ${params.RoleArn}`);
+        core.error(`External ID: ${params.ExternalId || 'not provided'}`);
         throw new Error(`Could not assume role with user credentials: ${(0, helpers_1.errorMessage)(error)}`);
     }
 }
@@ -469,14 +541,23 @@ function unsetCredentials(outputEnvCredentials) {
     }
 }
 function exportRegion(region, outputEnvCredentials) {
+    core.info(`[exportRegion] Called with region=${region}, outputEnvCredentials=${outputEnvCredentials}`);
     if (outputEnvCredentials) {
+        core.info('[exportRegion] Exporting AWS_DEFAULT_REGION and AWS_REGION environment variables');
         core.exportVariable('AWS_DEFAULT_REGION', region);
         core.exportVariable('AWS_REGION', region);
+        core.info('[exportRegion] Environment variables exported successfully');
+    }
+    else {
+        core.info('[exportRegion] Skipping environment variable export (outputEnvCredentials is false)');
     }
 }
 async function getCallerIdentity(client) {
+    core.info('[getCallerIdentity] Sending GetCallerIdentityCommand to STS');
     const identity = await client.send(new client_sts_1.GetCallerIdentityCommand({}));
+    core.info(`[getCallerIdentity] Received response - Account: ${identity.Account}, Arn: ${identity.Arn}, UserId: ${identity.UserId}`);
     if (!identity.Account || !identity.Arn) {
+        core.error('[getCallerIdentity] Response missing Account or ARN');
         throw new Error('Could not get Account ID or ARN from STS. Did you set credentials?');
     }
     const result = {
@@ -486,19 +567,55 @@ async function getCallerIdentity(client) {
     if (identity.UserId !== undefined) {
         result.UserId = identity.UserId;
     }
+    core.info(`[getCallerIdentity] Returning result: ${JSON.stringify(result)}`);
     return result;
 }
 // Obtains account ID from STS Client and sets it as output
-async function exportAccountId(credentialsClient, maskAccountId) {
-    const identity = await getCallerIdentity(credentialsClient.stsClient);
-    const accountId = identity.Account;
-    const arn = identity.Arn;
-    if (maskAccountId) {
-        core.setSecret(accountId);
-        core.setSecret(arn);
+// If providedAccountId is provided, uses it directly without making an STS call
+async function exportAccountId(credentialsClient, maskAccountId, providedAccountId) {
+    core.info(`[exportAccountId] Called with maskAccountId=${maskAccountId}, providedAccountId=${providedAccountId || 'not provided'}`);
+    let accountId;
+    let arn;
+    if (providedAccountId) {
+        // Use the provided account ID directly
+        accountId = providedAccountId;
+        core.info(`[exportAccountId] Using provided AWS account ID: ${accountId}`);
     }
+    else {
+        // Make STS call to retrieve account ID
+        core.info('[exportAccountId] No account ID provided, calling GetCallerIdentity to retrieve it');
+        try {
+            const identity = await getCallerIdentity(credentialsClient.stsClient);
+            accountId = identity.Account;
+            arn = identity.Arn;
+            core.info(`[exportAccountId] GetCallerIdentity successful - Account: ${accountId}, ARN: ${arn}`);
+        }
+        catch (error) {
+            core.error(`[exportAccountId] GetCallerIdentity failed: ${errorMessage(error)}`);
+            throw error;
+        }
+    }
+    if (maskAccountId) {
+        core.info('[exportAccountId] Masking account ID and ARN as secrets');
+        core.setSecret(accountId);
+        if (arn) {
+            core.setSecret(arn);
+        }
+        core.info('[exportAccountId] Secrets masked successfully');
+    }
+    else {
+        core.info('[exportAccountId] Not masking account ID (maskAccountId is false)');
+    }
+    core.info(`[exportAccountId] Setting output: aws-account-id=${accountId}`);
     core.setOutput('aws-account-id', accountId);
-    core.setOutput('authenticated-arn', arn);
+    if (arn) {
+        core.info(`[exportAccountId] Setting output: authenticated-arn=${arn}`);
+        core.setOutput('authenticated-arn', arn);
+    }
+    else {
+        core.info('[exportAccountId] No ARN available to set as output');
+    }
+    core.info(`[exportAccountId] Returning account ID: ${accountId}`);
     return accountId;
 }
 // Tags have a more restrictive set of acceptable characters than GitHub environment variables can.
@@ -569,15 +686,21 @@ function isDefined(i) {
 }
 /* c8 ignore stop */
 async function areCredentialsValid(credentialsClient) {
+    core.info('[areCredentialsValid] Checking if existing credentials are valid');
     const client = credentialsClient.stsClient;
     try {
+        core.info('[areCredentialsValid] Sending GetCallerIdentityCommand');
         const identity = await client.send(new client_sts_1.GetCallerIdentityCommand({}));
+        core.info(`[areCredentialsValid] Response received - Account: ${identity.Account}`);
         if (identity.Account) {
+            core.info('[areCredentialsValid] Credentials are valid');
             return true;
         }
+        core.info('[areCredentialsValid] No account ID in response, credentials invalid');
         return false;
     }
-    catch (_) {
+    catch (error) {
+        core.info(`[areCredentialsValid] GetCallerIdentity failed: ${errorMessage(error)} - credentials invalid`);
         return false;
     }
 }
@@ -664,6 +787,7 @@ const REGION_REGEX = /^[a-z0-9-]+$/g;
 async function run() {
     try {
         (0, helpers_1.translateEnvVariables)();
+        core.info('=== Starting configure-aws-credentials action ===');
         // Get inputs
         // Undefined inputs are empty strings ( or empty arrays)
         const AccessKeyId = core.getInput('aws-access-key-id', { required: false });
@@ -671,6 +795,8 @@ async function run() {
         const sessionTokenInput = core.getInput('aws-session-token', { required: false });
         const SessionToken = sessionTokenInput === '' ? undefined : sessionTokenInput;
         const region = core.getInput('aws-region', { required: true });
+        const accountIdInput = core.getInput('aws-account-id', { required: false });
+        const providedAccountId = accountIdInput === '' ? undefined : accountIdInput;
         const roleToAssume = core.getInput('role-to-assume', { required: false });
         const audience = core.getInput('audience', { required: false });
         const maskAccountId = (0, helpers_1.getBooleanInput)('mask-aws-account-id', { required: false });
@@ -697,8 +823,36 @@ async function run() {
             .split(',')
             .map((s) => s.trim());
         const forceSkipOidc = (0, helpers_1.getBooleanInput)('force-skip-oidc', { required: false });
+        const skipCredentialValidation = (0, helpers_1.getBooleanInput)('skip-credential-validation', { required: false });
         const noProxy = core.getInput('no-proxy', { required: false });
         const globalTimeout = Number.parseInt(core.getInput('action-timeout-s', { required: false })) || 0;
+        // Log all inputs (except sensitive ones)
+        core.info(`Input: aws-region=${region}`);
+        core.info(`Input: aws-account-id=${providedAccountId || 'not provided'}`);
+        core.info(`Input: role-to-assume=${roleToAssume || 'not provided'}`);
+        core.info(`Input: role-chaining=${roleChaining}`);
+        core.info(`Input: role-duration-seconds=${roleDuration}`);
+        core.info(`Input: role-session-name=${roleSessionName}`);
+        core.info(`Input: role-skip-session-tagging=${roleSkipSessionTagging}`);
+        core.info(`Input: audience=${audience || 'not provided'}`);
+        core.info(`Input: web-identity-token-file=${webIdentityTokenFile || 'not provided'}`);
+        core.info(`Input: mask-aws-account-id=${maskAccountId}`);
+        core.info(`Input: output-credentials=${outputCredentials}`);
+        core.info(`Input: output-env-credentials=${outputEnvCredentials}`);
+        core.info(`Input: unset-current-credentials=${unsetCurrentCredentials}`);
+        core.info(`Input: disable-retry=${disableRetry}`);
+        core.info(`Input: retry-max-attempts=${maxRetries}`);
+        core.info(`Input: special-characters-workaround=${specialCharacterWorkaround}`);
+        core.info(`Input: use-existing-credentials=${useExistingCredentials || 'not provided'}`);
+        core.info(`Input: allowed-account-ids=${expectedAccountIds.filter(id => id !== '').join(', ') || 'not provided'}`);
+        core.info(`Input: force-skip-oidc=${forceSkipOidc}`);
+        core.info(`Input: skip-credential-validation=${skipCredentialValidation}`);
+        core.info(`Input: http-proxy=${proxyServer ? 'configured' : 'not configured'}`);
+        core.info(`Input: no-proxy=${noProxy || 'not provided'}`);
+        core.info(`Input: action-timeout-s=${globalTimeout}`);
+        core.info(`Input: aws-access-key-id=${AccessKeyId ? 'provided' : 'not provided'}`);
+        core.info(`Input: aws-secret-access-key=${SecretAccessKey ? 'provided' : 'not provided'}`);
+        core.info(`Input: aws-session-token=${SessionToken ? 'provided' : 'not provided'}`);
         let timeoutId;
         if (globalTimeout > 0) {
             core.info(`Setting a global timeout of ${globalTimeout} seconds for the action`);
@@ -707,25 +861,36 @@ async function run() {
                 process.exit(1);
             }, globalTimeout * 1000);
         }
+        core.info('=== Validating Input Configuration ===');
         if (forceSkipOidc && roleToAssume && !AccessKeyId && !webIdentityTokenFile) {
+            core.error('Invalid configuration: force-skip-oidc requires aws-access-key-id or web-identity-token-file');
             throw new Error("If 'force-skip-oidc' is true and 'role-to-assume' is set, 'aws-access-key-id' or 'web-identity-token-file' must be set");
         }
+        core.info('Input configuration validation passed');
         if (specialCharacterWorkaround) {
             // 😳
+            core.info('Special character workaround enabled, forcing retry settings');
             disableRetry = false;
             maxRetries = 12;
+            core.info(`Updated retry settings: disableRetry=${disableRetry}, maxRetries=${maxRetries}`);
         }
         else if (maxRetries < 1) {
+            core.info('maxRetries was less than 1, setting to 1');
             maxRetries = 1;
         }
         // Logic to decide whether to attempt to use OIDC or not
+        core.info('=== Determining Authentication Method ===');
         const useGitHubOIDCProvider = () => {
-            if (forceSkipOidc)
+            core.info('Evaluating whether to use GitHub OIDC provider...');
+            if (forceSkipOidc) {
+                core.info('force-skip-oidc is true, skipping OIDC');
                 return false;
+            }
             // The `ACTIONS_ID_TOKEN_REQUEST_TOKEN` environment variable is set when the `id-token` permission is granted.
             // This is necessary to authenticate with OIDC, but not strictly set just for OIDC. If it is not set and all other
             // checks pass, it is likely but not guaranteed that the user needs but lacks this permission in their workflow.
             // So, we will log a warning when it is the only piece absent
+            core.info(`OIDC evaluation - roleToAssume: ${!!roleToAssume}, webIdentityTokenFile: ${!!webIdentityTokenFile}, AccessKeyId: ${!!AccessKeyId}, ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${!!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}, roleChaining: ${!!roleChaining}`);
             if (!!roleToAssume &&
                 !webIdentityTokenFile &&
                 !AccessKeyId &&
@@ -734,92 +899,171 @@ async function run() {
                 core.info('It looks like you might be trying to authenticate with OIDC. Did you mean to set the `id-token` permission? ' +
                     'If you are not trying to authenticate with OIDC and the action is working successfully, you can ignore this message.');
             }
-            return (!!roleToAssume &&
+            const willUseOIDC = (!!roleToAssume &&
                 !!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN &&
                 !AccessKeyId &&
                 !webIdentityTokenFile &&
                 !roleChaining);
+            core.info(`Will use GitHub OIDC provider: ${willUseOIDC}`);
+            return willUseOIDC;
         };
         if (unsetCurrentCredentials) {
+            core.info('=== Unsetting Current Credentials ===');
+            core.info(`Calling unsetCredentials with outputEnvCredentials=${outputEnvCredentials}`);
             (0, helpers_1.unsetCredentials)(outputEnvCredentials);
+            core.info('Current credentials unset');
         }
+        core.info('=== Validating and Exporting Region ===');
+        core.info(`Validating region: ${region}`);
         if (!region.match(REGION_REGEX)) {
+            core.error(`Region validation failed: ${region} does not match ${REGION_REGEX}`);
             throw new Error(`Region is not valid: ${region}`);
         }
+        core.info('Region validation passed');
+        core.info(`Exporting region with outputEnvCredentials=${outputEnvCredentials}`);
         (0, helpers_1.exportRegion)(region, outputEnvCredentials);
+        core.info('Region exported');
         // Instantiate credentials client
+        core.info('=== Instantiating Credentials Client ===');
         const clientProps = { region };
-        if (proxyServer)
+        if (proxyServer) {
+            core.info(`Adding proxy server to client props: ${proxyServer ? 'configured' : 'none'}`);
             clientProps.proxyServer = proxyServer;
-        if (noProxy)
+        }
+        if (noProxy) {
+            core.info(`Adding no-proxy configuration: ${noProxy}`);
             clientProps.noProxy = noProxy;
+        }
+        core.info(`Creating CredentialsClient with region=${clientProps.region}, proxyServer=${clientProps.proxyServer || 'none'}, noProxy=${clientProps.noProxy || 'none'}`);
         const credentialsClient = new CredentialsClient_1.CredentialsClient(clientProps);
+        core.info('CredentialsClient instantiated successfully');
         let sourceAccountId;
         let webIdentityToken;
         //if the user wants to attempt to use existing credentials, check if we have some already
         if (useExistingCredentials) {
+            core.info('=== Checking for Existing Valid Credentials ===');
+            core.info('use-existing-credentials is set, checking if credentials are already valid');
             const validCredentials = await (0, helpers_1.areCredentialsValid)(credentialsClient);
+            core.info(`Existing credentials valid: ${validCredentials}`);
             if (validCredentials) {
                 core.notice('Pre-existing credentials are valid. No need to generate new ones.');
                 if (timeoutId)
                     clearTimeout(timeoutId);
+                core.info('Exiting early due to valid existing credentials');
                 return;
             }
             core.notice('No valid credentials exist. Running as normal.');
         }
         // If OIDC is being used, generate token
         // Else, export credentials provided as input
+        core.info('=== Setting Up Authentication Credentials ===');
         if (useGitHubOIDCProvider()) {
+            core.info('Using GitHub OIDC provider to get ID token');
+            core.info(`Audience: ${audience}`);
+            core.info(`Retry enabled: ${!disableRetry}, Max retries: ${maxRetries}`);
             try {
                 webIdentityToken = await (0, helpers_1.retryAndBackoff)(async () => {
+                    core.info('Calling core.getIDToken()...');
                     return core.getIDToken(audience);
                 }, !disableRetry, maxRetries);
+                core.info('Successfully obtained ID token from GitHub OIDC');
             }
             catch (error) {
+                core.error(`getIDToken call failed: ${(0, helpers_1.errorMessage)(error)}`);
                 throw new Error(`getIDToken call failed: ${(0, helpers_1.errorMessage)(error)}`);
             }
         }
         else if (AccessKeyId) {
+            core.info('Using provided AWS access key ID and secret access key');
             if (!SecretAccessKey) {
+                core.error('aws-access-key-id was provided but aws-secret-access-key is missing');
                 throw new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided");
             }
             // The STS client for calling AssumeRole pulls creds from the environment.
             // Plus, in the assume role case, if the AssumeRole call fails, we want
             // the source credentials to already be masked as secrets
             // in any error messages.
+            core.info(`Exporting credentials - outputCredentials=${outputCredentials}, outputEnvCredentials=${outputEnvCredentials}`);
             (0, helpers_1.exportCredentials)({ AccessKeyId, SecretAccessKey, SessionToken }, outputCredentials, outputEnvCredentials);
+            core.info('Credentials exported successfully');
         }
         else if (!webIdentityTokenFile && !roleChaining) {
+            core.info('Using ambient credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
             // Proceed only if credentials can be picked up
-            await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
-            sourceAccountId = await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId);
+            core.info('Validating credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
+            if (!skipCredentialValidation) {
+                core.info('Running validateCredentials()');
+                try {
+                    await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
+                    core.info('Credential validation successful');
+                }
+                catch (error) {
+                    core.error(`Credential validation failed: ${(0, helpers_1.errorMessage)(error)}`);
+                    throw error;
+                }
+            }
+            else {
+                core.info('Skipping credential validation due to skip-credential-validation flag');
+            }
+            core.info('Exporting account ID');
+            sourceAccountId = await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId, providedAccountId);
+            core.info(`Account ID exported: ${sourceAccountId}`);
         }
         if (AccessKeyId || roleChaining) {
             // Validate that the SDK can actually pick up credentials.
             // This validates cases where this action is using existing environment credentials,
             // and cases where the user intended to provide input credentials but the secrets inputs resolved to empty strings.
-            await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
-            sourceAccountId = await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId);
+            core.info(`Validating credentials (AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'}, roleChaining=${roleChaining})`);
+            if (!skipCredentialValidation) {
+                core.info('Running validateCredentials()');
+                try {
+                    await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
+                    core.info('Credential validation successful');
+                }
+                catch (error) {
+                    core.error(`Credential validation failed: ${(0, helpers_1.errorMessage)(error)}`);
+                    throw error;
+                }
+            }
+            else {
+                core.info('Skipping credential validation due to skip-credential-validation flag');
+            }
+            core.info('Exporting account ID');
+            sourceAccountId = await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId, providedAccountId);
+            core.info(`Account ID exported: ${sourceAccountId}`);
         }
         // Get role credentials if configured to do so
         if (roleToAssume) {
+            core.info(`Attempting to assume role: ${roleToAssume}`);
             let roleCredentials;
             do {
-                roleCredentials = await (0, helpers_1.retryAndBackoff)(async () => {
-                    return (0, assumeRole_1.assumeRole)({
-                        credentialsClient,
-                        sourceAccountId,
-                        roleToAssume,
-                        roleExternalId,
-                        roleDuration,
-                        roleSessionName,
-                        roleSkipSessionTagging,
-                        webIdentityTokenFile,
-                        webIdentityToken,
-                        inlineSessionPolicy,
-                        managedSessionPolicies,
-                    });
-                }, !disableRetry, maxRetries);
+                try {
+                    roleCredentials = await (0, helpers_1.retryAndBackoff)(async () => {
+                        core.info('Calling assumeRole()');
+                        return (0, assumeRole_1.assumeRole)({
+                            credentialsClient,
+                            sourceAccountId,
+                            roleToAssume,
+                            roleExternalId,
+                            roleDuration,
+                            roleSessionName,
+                            roleSkipSessionTagging,
+                            webIdentityTokenFile,
+                            webIdentityToken,
+                            inlineSessionPolicy,
+                            managedSessionPolicies,
+                        });
+                    }, !disableRetry, maxRetries);
+                    core.info('AssumeRole successful');
+                }
+                catch (error) {
+                    core.error(`AssumeRole failed: ${(0, helpers_1.errorMessage)(error)}`);
+                    core.error(`Role: ${roleToAssume}`);
+                    core.error(`Source Account ID: ${sourceAccountId || 'undefined'}`);
+                    core.error(`Role Duration: ${roleDuration}`);
+                    core.error(`Role Session Name: ${roleSessionName}`);
+                    throw error;
+                }
             } while (specialCharacterWorkaround && !(0, helpers_1.verifyKeys)(roleCredentials.Credentials));
             core.info(`Authenticated as assumedRoleId ${roleCredentials.AssumedRoleUser?.AssumedRoleId}`);
             (0, helpers_1.exportCredentials)(roleCredentials.Credentials, outputCredentials, outputEnvCredentials);
@@ -827,11 +1071,25 @@ async function run() {
             // First: self-hosted runners. If the GITHUB_ACTIONS environment variable
             //  is set to `true` then we are NOT in a self-hosted runner.
             // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
-            if (!process.env.GITHUB_ACTIONS || AccessKeyId) {
-                await credentialsClient.validateCredentials(roleCredentials.Credentials?.AccessKeyId, roleChaining, expectedAccountIds);
+            const shouldValidate = !skipCredentialValidation && (!process.env.GITHUB_ACTIONS || AccessKeyId);
+            core.info(`Should validate assumed role credentials: ${shouldValidate} (skipCredentialValidation=${skipCredentialValidation}, GITHUB_ACTIONS=${process.env.GITHUB_ACTIONS}, AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'})`);
+            if (shouldValidate) {
+                core.info('Running validateCredentials() for assumed role');
+                try {
+                    await credentialsClient.validateCredentials(roleCredentials.Credentials?.AccessKeyId, roleChaining, expectedAccountIds);
+                    core.info('Assumed role credential validation successful');
+                }
+                catch (error) {
+                    core.error(`Assumed role credential validation failed: ${(0, helpers_1.errorMessage)(error)}`);
+                    throw error;
+                }
+            }
+            else {
+                core.info('Skipping assumed role credential validation');
             }
             if (outputEnvCredentials) {
-                await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId);
+                core.info('Exporting account ID for assumed role');
+                await (0, helpers_1.exportAccountId)(credentialsClient, maskAccountId, providedAccountId);
             }
         }
         else {
@@ -4302,7 +4560,7 @@ util_endpoints_2.customEndpointFunctions.aws = util_endpoints_1.awsEndpointFunct
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ruleSet = void 0;
 const F = "required", G = "type", H = "fn", I = "argv", J = "ref";
-const a = false, b = true, c = "booleanEquals", d = "stringEquals", e = "sigv4", f = "sts", g = "us-east-1", h = "endpoint", i = "https://sts.{Region}.{PartitionResult#dnsSuffix}", j = "tree", k = "error", l = "getAttr", m = { [F]: false, [G]: "String" }, n = { [F]: true, "default": false, [G]: "Boolean" }, o = { [J]: "Endpoint" }, p = { [H]: "isSet", [I]: [{ [J]: "Region" }] }, q = { [J]: "Region" }, r = { [H]: "aws.partition", [I]: [q], "assign": "PartitionResult" }, s = { [J]: "UseFIPS" }, t = { [J]: "UseDualStack" }, u = { "url": "https://sts.amazonaws.com", "properties": { "authSchemes": [{ "name": e, "signingName": f, "signingRegion": g }] }, "headers": {} }, v = {}, w = { "conditions": [{ [H]: d, [I]: [q, "aws-global"] }], [h]: u, [G]: h }, x = { [H]: c, [I]: [s, true] }, y = { [H]: c, [I]: [t, true] }, z = { [H]: l, [I]: [{ [J]: "PartitionResult" }, "supportsFIPS"] }, A = { [J]: "PartitionResult" }, B = { [H]: c, [I]: [true, { [H]: l, [I]: [A, "supportsDualStack"] }] }, C = [{ [H]: "isSet", [I]: [o] }], D = [x], E = [y];
+const a = false, b = true, c = "booleanEquals", d = "stringEquals", e = "sigv4", f = "sts", g = "us-east-1", h = "endpoint", i = "https://sts.{Region}.{PartitionResult#dnsSuffix}", j = "tree", k = "error", l = "getAttr", m = { [F]: false, [G]: "string" }, n = { [F]: true, "default": false, [G]: "boolean" }, o = { [J]: "Endpoint" }, p = { [H]: "isSet", [I]: [{ [J]: "Region" }] }, q = { [J]: "Region" }, r = { [H]: "aws.partition", [I]: [q], "assign": "PartitionResult" }, s = { [J]: "UseFIPS" }, t = { [J]: "UseDualStack" }, u = { "url": "https://sts.amazonaws.com", "properties": { "authSchemes": [{ "name": e, "signingName": f, "signingRegion": g }] }, "headers": {} }, v = {}, w = { "conditions": [{ [H]: d, [I]: [q, "aws-global"] }], [h]: u, [G]: h }, x = { [H]: c, [I]: [s, true] }, y = { [H]: c, [I]: [t, true] }, z = { [H]: l, [I]: [{ [J]: "PartitionResult" }, "supportsFIPS"] }, A = { [J]: "PartitionResult" }, B = { [H]: c, [I]: [true, { [H]: l, [I]: [A, "supportsDualStack"] }] }, C = [{ [H]: "isSet", [I]: [o] }], D = [x], E = [y];
 const _data = { version: "1.0", parameters: { Region: m, UseDualStack: n, UseFIPS: n, Endpoint: m, UseGlobalEndpoint: n }, rules: [{ conditions: [{ [H]: c, [I]: [{ [J]: "UseGlobalEndpoint" }, b] }, { [H]: "not", [I]: C }, p, r, { [H]: c, [I]: [s, a] }, { [H]: c, [I]: [t, a] }], rules: [{ conditions: [{ [H]: d, [I]: [q, "ap-northeast-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "ap-south-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "ap-southeast-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "ap-southeast-2"] }], endpoint: u, [G]: h }, w, { conditions: [{ [H]: d, [I]: [q, "ca-central-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "eu-central-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "eu-north-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "eu-west-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "eu-west-2"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "eu-west-3"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "sa-east-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, g] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "us-east-2"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "us-west-1"] }], endpoint: u, [G]: h }, { conditions: [{ [H]: d, [I]: [q, "us-west-2"] }], endpoint: u, [G]: h }, { endpoint: { url: i, properties: { authSchemes: [{ name: e, signingName: f, signingRegion: "{Region}" }] }, headers: v }, [G]: h }], [G]: j }, { conditions: C, rules: [{ conditions: D, error: "Invalid Configuration: FIPS and custom endpoint are not supported", [G]: k }, { conditions: E, error: "Invalid Configuration: Dualstack and custom endpoint are not supported", [G]: k }, { endpoint: { url: o, properties: v, headers: v }, [G]: h }], [G]: j }, { conditions: [p], rules: [{ conditions: [r], rules: [{ conditions: [x, y], rules: [{ conditions: [{ [H]: c, [I]: [b, z] }, B], rules: [{ endpoint: { url: "https://sts-fips.{Region}.{PartitionResult#dualStackDnsSuffix}", properties: v, headers: v }, [G]: h }], [G]: j }, { error: "FIPS and DualStack are enabled, but this partition does not support one or both", [G]: k }], [G]: j }, { conditions: D, rules: [{ conditions: [{ [H]: c, [I]: [z, b] }], rules: [{ conditions: [{ [H]: d, [I]: [{ [H]: l, [I]: [A, "name"] }, "aws-us-gov"] }], endpoint: { url: "https://sts.{Region}.amazonaws.com", properties: v, headers: v }, [G]: h }, { endpoint: { url: "https://sts-fips.{Region}.{PartitionResult#dnsSuffix}", properties: v, headers: v }, [G]: h }], [G]: j }, { error: "FIPS is enabled but this partition does not support FIPS", [G]: k }], [G]: j }, { conditions: E, rules: [{ conditions: [B], rules: [{ endpoint: { url: "https://sts.{Region}.{PartitionResult#dualStackDnsSuffix}", properties: v, headers: v }, [G]: h }], [G]: j }, { error: "DualStack is enabled but this partition does not support DualStack", [G]: k }], [G]: j }, w, { endpoint: { url: i, properties: v, headers: v }, [G]: h }], [G]: j }], [G]: j }, { error: "Invalid Configuration: Missing Region", [G]: k }] };
 exports.ruleSet = _data;
 
@@ -4323,6 +4581,7 @@ var EndpointParameters = __nccwpck_require__(2912);
 var core = __nccwpck_require__(8704);
 var protocolHttp = __nccwpck_require__(2356);
 var client = __nccwpck_require__(5152);
+var regionConfigResolver = __nccwpck_require__(6463);
 
 class STSServiceException extends smithyClient.ServiceException {
     constructor(options) {
@@ -5562,7 +5821,6 @@ class STS extends STSClient.STSClient {
 }
 smithyClient.createAggregatedClient(commands, STS);
 
-const ASSUME_ROLE_DEFAULT_REGION = "us-east-1";
 const getAccountIdFromAssumedRoleUser = (assumedRoleUser) => {
     if (typeof assumedRoleUser?.Arn === "string") {
         const arnComponents = assumedRoleUser.Arn.split(":");
@@ -5572,11 +5830,12 @@ const getAccountIdFromAssumedRoleUser = (assumedRoleUser) => {
     }
     return undefined;
 };
-const resolveRegion = async (_region, _parentRegion, credentialProviderLogger) => {
+const resolveRegion = async (_region, _parentRegion, credentialProviderLogger, loaderConfig = {}) => {
     const region = typeof _region === "function" ? await _region() : _region;
     const parentRegion = typeof _parentRegion === "function" ? await _parentRegion() : _parentRegion;
-    credentialProviderLogger?.debug?.("@aws-sdk/client-sts::resolveRegion", "accepting first of:", `${region} (provider)`, `${parentRegion} (parent client)`, `${ASSUME_ROLE_DEFAULT_REGION} (STS default)`);
-    return region ?? parentRegion ?? ASSUME_ROLE_DEFAULT_REGION;
+    const stsDefaultRegion = await regionConfigResolver.stsRegionDefaultResolver(loaderConfig)();
+    credentialProviderLogger?.debug?.("@aws-sdk/client-sts::resolveRegion", "accepting first of:", `${region} (credential provider clientConfig)`, `${parentRegion} (contextual client)`, `${stsDefaultRegion} (STS default: AWS_REGION, profile region, or us-east-1)`);
+    return region ?? parentRegion ?? stsDefaultRegion;
 };
 const getDefaultRoleAssumer$1 = (stsOptions, STSClient) => {
     let stsClient;
@@ -5584,11 +5843,16 @@ const getDefaultRoleAssumer$1 = (stsOptions, STSClient) => {
     return async (sourceCreds, params) => {
         closureSourceCreds = sourceCreds;
         if (!stsClient) {
-            const { logger = stsOptions?.parentClientConfig?.logger, region, requestHandler = stsOptions?.parentClientConfig?.requestHandler, credentialProviderLogger, } = stsOptions;
-            const resolvedRegion = await resolveRegion(region, stsOptions?.parentClientConfig?.region, credentialProviderLogger);
+            const { logger = stsOptions?.parentClientConfig?.logger, profile = stsOptions?.parentClientConfig?.profile, region, requestHandler = stsOptions?.parentClientConfig?.requestHandler, credentialProviderLogger, userAgentAppId = stsOptions?.parentClientConfig?.userAgentAppId, } = stsOptions;
+            const resolvedRegion = await resolveRegion(region, stsOptions?.parentClientConfig?.region, credentialProviderLogger, {
+                logger,
+                profile,
+            });
             const isCompatibleRequestHandler = !isH2(requestHandler);
             stsClient = new STSClient({
-                profile: stsOptions?.parentClientConfig?.profile,
+                ...stsOptions,
+                userAgentAppId,
+                profile,
                 credentialDefaultProvider: () => async () => closureSourceCreds,
                 region: resolvedRegion,
                 requestHandler: isCompatibleRequestHandler ? requestHandler : undefined,
@@ -5616,11 +5880,16 @@ const getDefaultRoleAssumerWithWebIdentity$1 = (stsOptions, STSClient) => {
     let stsClient;
     return async (params) => {
         if (!stsClient) {
-            const { logger = stsOptions?.parentClientConfig?.logger, region, requestHandler = stsOptions?.parentClientConfig?.requestHandler, credentialProviderLogger, } = stsOptions;
-            const resolvedRegion = await resolveRegion(region, stsOptions?.parentClientConfig?.region, credentialProviderLogger);
+            const { logger = stsOptions?.parentClientConfig?.logger, profile = stsOptions?.parentClientConfig?.profile, region, requestHandler = stsOptions?.parentClientConfig?.requestHandler, credentialProviderLogger, userAgentAppId = stsOptions?.parentClientConfig?.userAgentAppId, } = stsOptions;
+            const resolvedRegion = await resolveRegion(region, stsOptions?.parentClientConfig?.region, credentialProviderLogger, {
+                logger,
+                profile,
+            });
             const isCompatibleRequestHandler = !isH2(requestHandler);
             stsClient = new STSClient({
-                profile: stsOptions?.parentClientConfig?.profile,
+                ...stsOptions,
+                userAgentAppId,
+                profile,
                 region: resolvedRegion,
                 requestHandler: isCompatibleRequestHandler ? requestHandler : undefined,
                 logger: logger,
@@ -7975,17 +8244,73 @@ const remoteProvider = async (init) => {
     return fromInstanceMetadata(init);
 };
 
+function memoizeChain(providers, treatAsExpired) {
+    const chain = internalCreateChain(providers);
+    let activeLock;
+    let passiveLock;
+    let credentials;
+    const provider = async (options) => {
+        if (options?.forceRefresh) {
+            return await chain(options);
+        }
+        if (credentials?.expiration) {
+            if (credentials?.expiration?.getTime() < Date.now()) {
+                credentials = undefined;
+            }
+        }
+        if (activeLock) {
+            await activeLock;
+        }
+        else if (!credentials || treatAsExpired?.(credentials)) {
+            if (credentials) {
+                if (!passiveLock) {
+                    passiveLock = chain(options).then((c) => {
+                        credentials = c;
+                        passiveLock = undefined;
+                    });
+                }
+            }
+            else {
+                activeLock = chain(options).then((c) => {
+                    credentials = c;
+                    activeLock = undefined;
+                });
+                return provider(options);
+            }
+        }
+        return credentials;
+    };
+    return provider;
+}
+const internalCreateChain = (providers) => async (awsIdentityProperties) => {
+    let lastProviderError;
+    for (const provider of providers) {
+        try {
+            return await provider(awsIdentityProperties);
+        }
+        catch (err) {
+            lastProviderError = err;
+            if (err?.tryNextLink) {
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastProviderError;
+};
+
 let multipleCredentialSourceWarningEmitted = false;
-const defaultProvider = (init = {}) => propertyProvider.memoize(propertyProvider.chain(async () => {
-    const profile = init.profile ?? process.env[sharedIniFileLoader.ENV_PROFILE];
-    if (profile) {
-        const envStaticCredentialsAreSet = process.env[credentialProviderEnv.ENV_KEY] && process.env[credentialProviderEnv.ENV_SECRET];
-        if (envStaticCredentialsAreSet) {
-            if (!multipleCredentialSourceWarningEmitted) {
-                const warnFn = init.logger?.warn && init.logger?.constructor?.name !== "NoOpLogger"
-                    ? init.logger.warn.bind(init.logger)
-                    : console.warn;
-                warnFn(`@aws-sdk/credential-provider-node - defaultProvider::fromEnv WARNING:
+const defaultProvider = (init = {}) => memoizeChain([
+    async () => {
+        const profile = init.profile ?? process.env[sharedIniFileLoader.ENV_PROFILE];
+        if (profile) {
+            const envStaticCredentialsAreSet = process.env[credentialProviderEnv.ENV_KEY] && process.env[credentialProviderEnv.ENV_SECRET];
+            if (envStaticCredentialsAreSet) {
+                if (!multipleCredentialSourceWarningEmitted) {
+                    const warnFn = init.logger?.warn && init.logger?.constructor?.name !== "NoOpLogger"
+                        ? init.logger.warn.bind(init.logger)
+                        : console.warn;
+                    warnFn(`@aws-sdk/credential-provider-node - defaultProvider::fromEnv WARNING:
     Multiple credential sources detected: 
     Both AWS_PROFILE and the pair AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY static credentials are set.
     This SDK will proceed with the AWS_PROFILE value.
@@ -7994,45 +8319,52 @@ const defaultProvider = (init = {}) => propertyProvider.memoize(propertyProvider
     Please ensure that your environment only sets either the AWS_PROFILE or the
     AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY pair.
 `);
-                multipleCredentialSourceWarningEmitted = true;
+                    multipleCredentialSourceWarningEmitted = true;
+                }
             }
+            throw new propertyProvider.CredentialsProviderError("AWS_PROFILE is set, skipping fromEnv provider.", {
+                logger: init.logger,
+                tryNextLink: true,
+            });
         }
-        throw new propertyProvider.CredentialsProviderError("AWS_PROFILE is set, skipping fromEnv provider.", {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromEnv");
+        return credentialProviderEnv.fromEnv(init)();
+    },
+    async (awsIdentityProperties) => {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromSSO");
+        const { ssoStartUrl, ssoAccountId, ssoRegion, ssoRoleName, ssoSession } = init;
+        if (!ssoStartUrl && !ssoAccountId && !ssoRegion && !ssoRoleName && !ssoSession) {
+            throw new propertyProvider.CredentialsProviderError("Skipping SSO provider in default chain (inputs do not include SSO fields).", { logger: init.logger });
+        }
+        const { fromSSO } = await __nccwpck_require__.e(/* import() */ 998).then(__nccwpck_require__.t.bind(__nccwpck_require__, 998, 19));
+        return fromSSO(init)(awsIdentityProperties);
+    },
+    async (awsIdentityProperties) => {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromIni");
+        const { fromIni } = await __nccwpck_require__.e(/* import() */ 869).then(__nccwpck_require__.t.bind(__nccwpck_require__, 5869, 19));
+        return fromIni(init)(awsIdentityProperties);
+    },
+    async (awsIdentityProperties) => {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromProcess");
+        const { fromProcess } = await __nccwpck_require__.e(/* import() */ 360).then(__nccwpck_require__.t.bind(__nccwpck_require__, 5360, 19));
+        return fromProcess(init)(awsIdentityProperties);
+    },
+    async (awsIdentityProperties) => {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromTokenFile");
+        const { fromTokenFile } = await Promise.all(/* import() */[__nccwpck_require__.e(136), __nccwpck_require__.e(956)]).then(__nccwpck_require__.t.bind(__nccwpck_require__, 9956, 23));
+        return fromTokenFile(init)(awsIdentityProperties);
+    },
+    async () => {
+        init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::remoteProvider");
+        return (await remoteProvider(init))();
+    },
+    async () => {
+        throw new propertyProvider.CredentialsProviderError("Could not load credentials from any providers", {
+            tryNextLink: false,
             logger: init.logger,
-            tryNextLink: true,
         });
-    }
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromEnv");
-    return credentialProviderEnv.fromEnv(init)();
-}, async () => {
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromSSO");
-    const { ssoStartUrl, ssoAccountId, ssoRegion, ssoRoleName, ssoSession } = init;
-    if (!ssoStartUrl && !ssoAccountId && !ssoRegion && !ssoRoleName && !ssoSession) {
-        throw new propertyProvider.CredentialsProviderError("Skipping SSO provider in default chain (inputs do not include SSO fields).", { logger: init.logger });
-    }
-    const { fromSSO } = await __nccwpck_require__.e(/* import() */ 998).then(__nccwpck_require__.t.bind(__nccwpck_require__, 998, 19));
-    return fromSSO(init)();
-}, async () => {
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromIni");
-    const { fromIni } = await __nccwpck_require__.e(/* import() */ 869).then(__nccwpck_require__.t.bind(__nccwpck_require__, 5869, 19));
-    return fromIni(init)();
-}, async () => {
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromProcess");
-    const { fromProcess } = await __nccwpck_require__.e(/* import() */ 360).then(__nccwpck_require__.t.bind(__nccwpck_require__, 5360, 19));
-    return fromProcess(init)();
-}, async () => {
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::fromTokenFile");
-    const { fromTokenFile } = await Promise.all(/* import() */[__nccwpck_require__.e(136), __nccwpck_require__.e(956)]).then(__nccwpck_require__.t.bind(__nccwpck_require__, 9956, 23));
-    return fromTokenFile(init)();
-}, async () => {
-    init.logger?.debug("@aws-sdk/credential-provider-node - defaultProvider::remoteProvider");
-    return (await remoteProvider(init))();
-}, async () => {
-    throw new propertyProvider.CredentialsProviderError("Could not load credentials from any providers", {
-        tryNextLink: false,
-        logger: init.logger,
-    });
-}), credentialsTreatedAsExpired, credentialsWillNeedRefresh);
+    },
+], credentialsTreatedAsExpired);
 const credentialsWillNeedRefresh = (credentials) => credentials?.expiration !== undefined;
 const credentialsTreatedAsExpired = (credentials) => credentials?.expiration !== undefined && credentials.expiration.getTime() - Date.now() < 300000;
 
@@ -8188,7 +8520,7 @@ Object.keys(recursionDetectionMiddleware).forEach(function (k) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.recursionDetectionMiddleware = void 0;
-const lambda_invoke_store_1 = __nccwpck_require__(7453);
+const lambda_invoke_store_1 = __nccwpck_require__(9320);
 const protocol_http_1 = __nccwpck_require__(2356);
 const TRACE_ID_HEADER_NAME = "X-Amzn-Trace-Id";
 const ENV_LAMBDA_FUNCTION_NAME = "AWS_LAMBDA_FUNCTION_NAME";
@@ -8313,8 +8645,8 @@ const USER_AGENT = "user-agent";
 const X_AMZ_USER_AGENT = "x-amz-user-agent";
 const SPACE = " ";
 const UA_NAME_SEPARATOR = "/";
-const UA_NAME_ESCAPE_REGEX = /[^\!\$\%\&\'\*\+\-\.\^\_\`\|\~\d\w]/g;
-const UA_VALUE_ESCAPE_REGEX = /[^\!\$\%\&\'\*\+\-\.\^\_\`\|\~\d\w\#]/g;
+const UA_NAME_ESCAPE_REGEX = /[^!$%&'*+\-.^_`|~\w]/g;
+const UA_VALUE_ESCAPE_REGEX = /[^!$%&'*+\-.^_`|~\w#]/g;
 const UA_ESCAPE_CHAR = "-";
 
 const BYTE_LIMIT = 1024;
@@ -8350,7 +8682,7 @@ const userAgentMiddleware = (options) => (next, context) => async (args) => {
     const customUserAgent = options?.customUserAgent?.map(escapeUserAgent) || [];
     const appId = await options.userAgentAppId();
     if (appId) {
-        defaultUserAgent.push(escapeUserAgent([`app/${appId}`]));
+        defaultUserAgent.push(escapeUserAgent([`app`, `${appId}`]));
     }
     const prefix = utilEndpoints.getUserAgentPrefix();
     const sdkUserAgentValue = (prefix ? [prefix] : [])
@@ -8424,10 +8756,13 @@ exports.userAgentMiddleware = userAgentMiddleware;
 /***/ }),
 
 /***/ 6463:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
+
+var configResolver = __nccwpck_require__(9316);
+var stsRegionDefaultResolver = __nccwpck_require__(5779);
 
 const getAwsRegionExtensionConfiguration = (runtimeConfig) => {
     return {
@@ -8445,57 +8780,62 @@ const resolveAwsRegionExtensionConfiguration = (awsRegionExtensionConfiguration)
     };
 };
 
-const REGION_ENV_NAME = "AWS_REGION";
-const REGION_INI_NAME = "region";
-const NODE_REGION_CONFIG_OPTIONS = {
-    environmentVariableSelector: (env) => env[REGION_ENV_NAME],
-    configFileSelector: (profile) => profile[REGION_INI_NAME],
-    default: () => {
-        throw new Error("Region is missing");
-    },
-};
-const NODE_REGION_CONFIG_FILE_OPTIONS = {
-    preferredFile: "credentials",
-};
-
-const isFipsRegion = (region) => typeof region === "string" && (region.startsWith("fips-") || region.endsWith("-fips"));
-
-const getRealRegion = (region) => isFipsRegion(region)
-    ? ["fips-aws-global", "aws-fips"].includes(region)
-        ? "us-east-1"
-        : region.replace(/fips-(dkr-|prod-)?|-fips/, "")
-    : region;
-
-const resolveRegionConfig = (input) => {
-    const { region, useFipsEndpoint } = input;
-    if (!region) {
-        throw new Error("Region is missing");
-    }
-    return Object.assign(input, {
-        region: async () => {
-            if (typeof region === "string") {
-                return getRealRegion(region);
-            }
-            const providedRegion = await region();
-            return getRealRegion(providedRegion);
-        },
-        useFipsEndpoint: async () => {
-            const providedRegion = typeof region === "string" ? region : await region();
-            if (isFipsRegion(providedRegion)) {
-                return true;
-            }
-            return typeof useFipsEndpoint !== "function" ? Promise.resolve(!!useFipsEndpoint) : useFipsEndpoint();
-        },
-    });
-};
-
-exports.NODE_REGION_CONFIG_FILE_OPTIONS = NODE_REGION_CONFIG_FILE_OPTIONS;
-exports.NODE_REGION_CONFIG_OPTIONS = NODE_REGION_CONFIG_OPTIONS;
-exports.REGION_ENV_NAME = REGION_ENV_NAME;
-exports.REGION_INI_NAME = REGION_INI_NAME;
+Object.defineProperty(exports, "NODE_REGION_CONFIG_FILE_OPTIONS", ({
+    enumerable: true,
+    get: function () { return configResolver.NODE_REGION_CONFIG_FILE_OPTIONS; }
+}));
+Object.defineProperty(exports, "NODE_REGION_CONFIG_OPTIONS", ({
+    enumerable: true,
+    get: function () { return configResolver.NODE_REGION_CONFIG_OPTIONS; }
+}));
+Object.defineProperty(exports, "REGION_ENV_NAME", ({
+    enumerable: true,
+    get: function () { return configResolver.REGION_ENV_NAME; }
+}));
+Object.defineProperty(exports, "REGION_INI_NAME", ({
+    enumerable: true,
+    get: function () { return configResolver.REGION_INI_NAME; }
+}));
+Object.defineProperty(exports, "resolveRegionConfig", ({
+    enumerable: true,
+    get: function () { return configResolver.resolveRegionConfig; }
+}));
 exports.getAwsRegionExtensionConfiguration = getAwsRegionExtensionConfiguration;
 exports.resolveAwsRegionExtensionConfiguration = resolveAwsRegionExtensionConfiguration;
-exports.resolveRegionConfig = resolveRegionConfig;
+Object.keys(stsRegionDefaultResolver).forEach(function (k) {
+    if (k !== 'default' && !Object.prototype.hasOwnProperty.call(exports, k)) Object.defineProperty(exports, k, {
+        enumerable: true,
+        get: function () { return stsRegionDefaultResolver[k]; }
+    });
+});
+
+
+/***/ }),
+
+/***/ 5779:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.warning = void 0;
+exports.stsRegionDefaultResolver = stsRegionDefaultResolver;
+const config_resolver_1 = __nccwpck_require__(9316);
+const node_config_provider_1 = __nccwpck_require__(5704);
+function stsRegionDefaultResolver(loaderConfig = {}) {
+    return (0, node_config_provider_1.loadConfig)({
+        ...config_resolver_1.NODE_REGION_CONFIG_OPTIONS,
+        async default() {
+            if (!exports.warning.silence) {
+                console.warn("@aws-sdk - WARN - default STS region of us-east-1 used. See @aws-sdk/credential-providers README and set a region explicitly.");
+            }
+            return "us-east-1";
+        },
+    }, { ...config_resolver_1.NODE_REGION_CONFIG_FILE_OPTIONS, ...loaderConfig });
+}
+exports.warning = {
+    silence: false,
+};
 
 
 /***/ }),
@@ -8752,6 +9092,9 @@ var partitions = [
 			},
 			"us-isob-east-1": {
 				description: "US ISOB East (Ohio)"
+			},
+			"us-isob-west-1": {
+				description: "US ISOB West"
 			}
 		}
 	},
@@ -9144,15 +9487,14 @@ function parseXML(xmlString) {
 
 /***/ }),
 
-/***/ 7453:
+/***/ 9320:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.InvokeStore = void 0;
-const async_hooks_1 = __nccwpck_require__(290);
-// AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA provides an escape hatch since we're modifying the global object which may not be expected to a customer's handler.
+
+var async_hooks = __nccwpck_require__(290);
+
 const noGlobalAwsLambda = process.env["AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA"] === "1" ||
     process.env["AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA"] === "true";
 if (!noGlobalAwsLambda) {
@@ -9161,37 +9503,21 @@ if (!noGlobalAwsLambda) {
 const PROTECTED_KEYS = {
     REQUEST_ID: Symbol("_AWS_LAMBDA_REQUEST_ID"),
     X_RAY_TRACE_ID: Symbol("_AWS_LAMBDA_X_RAY_TRACE_ID"),
+    TENANT_ID: Symbol("_AWS_LAMBDA_TENANT_ID"),
 };
-/**
- * InvokeStore implementation class
- */
 class InvokeStoreImpl {
-    static storage = new async_hooks_1.AsyncLocalStorage();
-    // Protected keys for Lambda context fields
+    static storage = new async_hooks.AsyncLocalStorage();
     static PROTECTED_KEYS = PROTECTED_KEYS;
-    /**
-     * Initialize and run code within an invoke context
-     */
     static run(context, fn) {
         return this.storage.run({ ...context }, fn);
     }
-    /**
-     * Get the complete current context
-     */
     static getContext() {
         return this.storage.getStore();
     }
-    /**
-     * Get a specific value from the context by key
-     */
     static get(key) {
         const context = this.storage.getStore();
         return context?.[key];
     }
-    /**
-     * Set a custom value in the current context
-     * Protected Lambda context fields cannot be overwritten
-     */
     static set(key, value) {
         if (this.isProtectedKey(key)) {
             throw new Error(`Cannot modify protected Lambda context field`);
@@ -9201,27 +9527,18 @@ class InvokeStoreImpl {
             context[key] = value;
         }
     }
-    /**
-     * Get the current request ID
-     */
     static getRequestId() {
         return this.get(this.PROTECTED_KEYS.REQUEST_ID) ?? "-";
     }
-    /**
-     * Get the current X-ray trace ID
-     */
     static getXRayTraceId() {
         return this.get(this.PROTECTED_KEYS.X_RAY_TRACE_ID);
     }
-    /**
-     * Check if we're currently within an invoke context
-     */
+    static getTenantId() {
+        return this.get(this.PROTECTED_KEYS.TENANT_ID);
+    }
     static hasContext() {
         return this.storage.getStore() !== undefined;
     }
-    /**
-     * Check if a key is protected (readonly Lambda context field)
-     */
     static isProtectedKey(key) {
         return (key === this.PROTECTED_KEYS.REQUEST_ID ||
             key === this.PROTECTED_KEYS.X_RAY_TRACE_ID);
@@ -9237,7 +9554,9 @@ else {
         globalThis.awslambda.InvokeStore = instance;
     }
 }
-exports.InvokeStore = instance;
+const InvokeStore = instance;
+
+exports.InvokeStore = InvokeStore;
 
 
 /***/ }),
@@ -9250,6 +9569,7 @@ exports.InvokeStore = instance;
 
 var utilConfigProvider = __nccwpck_require__(6716);
 var utilMiddleware = __nccwpck_require__(6324);
+var utilEndpoints = __nccwpck_require__(9674);
 
 const ENV_USE_DUALSTACK_ENDPOINT = "AWS_USE_DUALSTACK_ENDPOINT";
 const CONFIG_USE_DUALSTACK_ENDPOINT = "use_dualstack_endpoint";
@@ -9321,6 +9641,16 @@ const NODE_REGION_CONFIG_FILE_OPTIONS = {
     preferredFile: "credentials",
 };
 
+const validRegions = new Set();
+const checkRegion = (region, check = utilEndpoints.isValidHostLabel) => {
+    if (!validRegions.has(region) && !check(region)) {
+        throw new Error(`Region not accepted: region="${region}" is not a valid hostname component.`);
+    }
+    else {
+        validRegions.add(region);
+    }
+};
+
 const isFipsRegion = (region) => typeof region === "string" && (region.startsWith("fips-") || region.endsWith("-fips"));
 
 const getRealRegion = (region) => isFipsRegion(region)
@@ -9336,11 +9666,10 @@ const resolveRegionConfig = (input) => {
     }
     return Object.assign(input, {
         region: async () => {
-            if (typeof region === "string") {
-                return getRealRegion(region);
-            }
-            const providedRegion = await region();
-            return getRealRegion(providedRegion);
+            const providedRegion = typeof region === "function" ? await region() : region;
+            const realRegion = getRealRegion(providedRegion);
+            checkRegion(realRegion);
+            return realRegion;
         },
         useFipsEndpoint: async () => {
             const providedRegion = typeof region === "string" ? region : await region();
@@ -12807,12 +13136,8 @@ const _parseRfc3339DateTimeWithOffset = (value) => {
     range(hours, 0, 23);
     range(minutes, 0, 59);
     range(seconds, 0, 60);
-    const date = new Date();
-    date.setUTCFullYear(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
-    date.setUTCHours(Number(hours));
-    date.setUTCMinutes(Number(minutes));
-    date.setUTCSeconds(Number(seconds));
-    date.setUTCMilliseconds(Number(ms) ? Math.round(parseFloat(`0.${ms}`) * 1000) : 0);
+    const date = new Date(Date.UTC(Number(yearStr), Number(monthStr) - 1, Number(dayStr), Number(hours), Number(minutes), Number(seconds), Number(ms) ? Math.round(parseFloat(`0.${ms}`) * 1000) : 0));
+    date.setUTCFullYear(Number(yearStr));
     if (offsetStr.toUpperCase() != "Z") {
         const [, sign, offsetH, offsetM] = /([+-])(\d\d):(\d\d)/.exec(offsetStr) || [void 0, "+", 0, 0];
         const scalar = sign === "-" ? 1 : -1;
@@ -12846,18 +13171,13 @@ const _parseRfc7231DateTime = (value) => {
         [, month, day, hour, minute, second, fraction, year] = matches;
     }
     if (year && second) {
-        const date = new Date();
-        date.setUTCFullYear(Number(year));
-        date.setUTCMonth(months.indexOf(month));
+        const timestamp = Date.UTC(Number(year), months.indexOf(month), Number(day), Number(hour), Number(minute), Number(second), fraction ? Math.round(parseFloat(`0.${fraction}`) * 1000) : 0);
         range(day, 1, 31);
-        date.setUTCDate(Number(day));
         range(hour, 0, 23);
-        date.setUTCHours(Number(hour));
         range(minute, 0, 59);
-        date.setUTCMinutes(Number(minute));
         range(second, 0, 60);
-        date.setUTCSeconds(Number(second));
-        date.setUTCMilliseconds(fraction ? Math.round(parseFloat(`0.${fraction}`) * 1000) : 0);
+        const date = new Date(timestamp);
+        date.setUTCFullYear(Number(year));
         return date;
     }
     throw new TypeError(`Invalid RFC7231 date-time value ${value}.`);
@@ -14641,12 +14961,12 @@ const setSocketTimeout = (request, reject, timeoutInMs = 0) => {
 };
 
 const MIN_WAIT_TIME = 6_000;
-async function writeRequestBody(httpRequest, request, maxContinueTimeoutMs = MIN_WAIT_TIME) {
+async function writeRequestBody(httpRequest, request, maxContinueTimeoutMs = MIN_WAIT_TIME, externalAgent = false) {
     const headers = request.headers ?? {};
-    const expect = headers["Expect"] || headers["expect"];
+    const expect = headers.Expect || headers.expect;
     let timeoutId = -1;
     let sendBody = true;
-    if (expect === "100-continue") {
+    if (!externalAgent && expect === "100-continue") {
         sendBody = await Promise.race([
             new Promise((resolve) => {
                 timeoutId = Number(timing.setTimeout(() => resolve(true), Math.max(MIN_WAIT_TIME, maxContinueTimeoutMs)));
@@ -14700,6 +15020,7 @@ class NodeHttpHandler {
     config;
     configProvider;
     socketWarningTimestamp = 0;
+    externalAgent = false;
     metadata = { handlerProtocol: "http/1.1" };
     static create(instanceOrOptions) {
         if (typeof instanceOrOptions?.handle === "function") {
@@ -14756,12 +15077,14 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
             throwOnRequestTimeout,
             httpAgent: (() => {
                 if (httpAgent instanceof http.Agent || typeof httpAgent?.destroy === "function") {
+                    this.externalAgent = true;
                     return httpAgent;
                 }
                 return new http.Agent({ keepAlive, maxSockets, ...httpAgent });
             })(),
             httpsAgent: (() => {
                 if (httpsAgent instanceof https.Agent || typeof httpsAgent?.destroy === "function") {
+                    this.externalAgent = true;
                     return httpsAgent;
                 }
                 return new https.Agent({ keepAlive, maxSockets, ...httpsAgent });
@@ -14778,6 +15101,7 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
             this.config = await this.configProvider;
         }
         return new Promise((_resolve, _reject) => {
+            const config = this.config;
             let writeRequestBodyPromise = undefined;
             const timeouts = [];
             const resolve = async (arg) => {
@@ -14790,9 +15114,6 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
                 timeouts.forEach(timing.clearTimeout);
                 _reject(arg);
             };
-            if (!this.config) {
-                throw new Error("Node HTTP request handler config is not resolved");
-            }
             if (abortSignal?.aborted) {
                 const abortError = new Error("Request aborted");
                 abortError.name = "AbortError";
@@ -14800,11 +15121,18 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
                 return;
             }
             const isSSL = request.protocol === "https:";
-            const agent = isSSL ? this.config.httpsAgent : this.config.httpAgent;
+            const headers = request.headers ?? {};
+            const expectContinue = (headers.Expect ?? headers.expect) === "100-continue";
+            let agent = isSSL ? config.httpsAgent : config.httpAgent;
+            if (expectContinue && !this.externalAgent) {
+                agent = new (isSSL ? https.Agent : http.Agent)({
+                    keepAlive: false,
+                    maxSockets: Infinity,
+                });
+            }
             timeouts.push(timing.setTimeout(() => {
-                this.socketWarningTimestamp = NodeHttpHandler.checkSocketUsage(agent, this.socketWarningTimestamp, this.config.logger);
-            }, this.config.socketAcquisitionWarningTimeout ??
-                (this.config.requestTimeout ?? 2000) + (this.config.connectionTimeout ?? 1000)));
+                this.socketWarningTimestamp = NodeHttpHandler.checkSocketUsage(agent, this.socketWarningTimestamp, config.logger);
+            }, config.socketAcquisitionWarningTimeout ?? (config.requestTimeout ?? 2000) + (config.connectionTimeout ?? 1000)));
             const queryString = querystringBuilder.buildQueryString(request.query || {});
             let auth = undefined;
             if (request.username != null || request.password != null) {
@@ -14869,10 +15197,10 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
                     abortSignal.onabort = onAbort;
                 }
             }
-            const effectiveRequestTimeout = requestTimeout ?? this.config.requestTimeout;
-            timeouts.push(setConnectionTimeout(req, reject, this.config.connectionTimeout));
-            timeouts.push(setRequestTimeout(req, reject, effectiveRequestTimeout, this.config.throwOnRequestTimeout, this.config.logger ?? console));
-            timeouts.push(setSocketTimeout(req, reject, this.config.socketTimeout));
+            const effectiveRequestTimeout = requestTimeout ?? config.requestTimeout;
+            timeouts.push(setConnectionTimeout(req, reject, config.connectionTimeout));
+            timeouts.push(setRequestTimeout(req, reject, effectiveRequestTimeout, config.throwOnRequestTimeout, config.logger ?? console));
+            timeouts.push(setSocketTimeout(req, reject, config.socketTimeout));
             const httpAgent = nodeHttpsOptions.agent;
             if (typeof httpAgent === "object" && "keepAlive" in httpAgent) {
                 timeouts.push(setSocketKeepAlive(req, {
@@ -14880,7 +15208,7 @@ or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler conf
                     keepAliveMsecs: httpAgent.keepAliveMsecs,
                 }));
             }
-            writeRequestBodyPromise = writeRequestBody(req, request, effectiveRequestTimeout).catch((e) => {
+            writeRequestBodyPromise = writeRequestBody(req, request, effectiveRequestTimeout, this.externalAgent).catch((e) => {
                 timeouts.forEach(timing.clearTimeout);
                 return _reject(e);
             });
@@ -77980,7 +78308,7 @@ module.exports = LRUCache
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"@aws-sdk/client-sts","description":"AWS SDK for JavaScript Sts Client for Node.js, Browser and React Native","version":"3.913.0","scripts":{"build":"concurrently \'yarn:build:cjs\' \'yarn:build:es\' \'yarn:build:types\'","build:cjs":"node ../../scripts/compilation/inline client-sts","build:es":"tsc -p tsconfig.es.json","build:include:deps":"lerna run --scope $npm_package_name --include-dependencies build","build:types":"rimraf ./dist-types tsconfig.types.tsbuildinfo && tsc -p tsconfig.types.json","build:types:downlevel":"downlevel-dts dist-types dist-types/ts3.4","clean":"rimraf ./dist-* && rimraf *.tsbuildinfo","extract:docs":"api-extractor run --local","generate:client":"node ../../scripts/generate-clients/single-service --solo sts","test":"yarn g:vitest run","test:watch":"yarn g:vitest watch"},"main":"./dist-cjs/index.js","types":"./dist-types/index.d.ts","module":"./dist-es/index.js","sideEffects":false,"dependencies":{"@aws-crypto/sha256-browser":"5.2.0","@aws-crypto/sha256-js":"5.2.0","@aws-sdk/core":"3.911.0","@aws-sdk/credential-provider-node":"3.913.0","@aws-sdk/middleware-host-header":"3.910.0","@aws-sdk/middleware-logger":"3.910.0","@aws-sdk/middleware-recursion-detection":"3.910.0","@aws-sdk/middleware-user-agent":"3.911.0","@aws-sdk/region-config-resolver":"3.910.0","@aws-sdk/types":"3.910.0","@aws-sdk/util-endpoints":"3.910.0","@aws-sdk/util-user-agent-browser":"3.910.0","@aws-sdk/util-user-agent-node":"3.911.0","@smithy/config-resolver":"^4.3.2","@smithy/core":"^3.16.1","@smithy/fetch-http-handler":"^5.3.3","@smithy/hash-node":"^4.2.2","@smithy/invalid-dependency":"^4.2.2","@smithy/middleware-content-length":"^4.2.2","@smithy/middleware-endpoint":"^4.3.3","@smithy/middleware-retry":"^4.4.3","@smithy/middleware-serde":"^4.2.2","@smithy/middleware-stack":"^4.2.2","@smithy/node-config-provider":"^4.3.2","@smithy/node-http-handler":"^4.4.1","@smithy/protocol-http":"^5.3.2","@smithy/smithy-client":"^4.8.1","@smithy/types":"^4.7.1","@smithy/url-parser":"^4.2.2","@smithy/util-base64":"^4.3.0","@smithy/util-body-length-browser":"^4.2.0","@smithy/util-body-length-node":"^4.2.1","@smithy/util-defaults-mode-browser":"^4.3.2","@smithy/util-defaults-mode-node":"^4.2.3","@smithy/util-endpoints":"^3.2.2","@smithy/util-middleware":"^4.2.2","@smithy/util-retry":"^4.2.2","@smithy/util-utf8":"^4.2.0","tslib":"^2.6.2"},"devDependencies":{"@tsconfig/node18":"18.2.4","@types/node":"^18.19.69","concurrently":"7.0.0","downlevel-dts":"0.10.1","rimraf":"3.0.2","typescript":"~5.8.3"},"engines":{"node":">=18.0.0"},"typesVersions":{"<4.0":{"dist-types/*":["dist-types/ts3.4/*"]}},"files":["dist-*/**"],"author":{"name":"AWS SDK for JavaScript Team","url":"https://aws.amazon.com/javascript/"},"license":"Apache-2.0","browser":{"./dist-es/runtimeConfig":"./dist-es/runtimeConfig.browser"},"react-native":{"./dist-es/runtimeConfig":"./dist-es/runtimeConfig.native"},"homepage":"https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-sts","repository":{"type":"git","url":"https://github.com/aws/aws-sdk-js-v3.git","directory":"clients/client-sts"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"@aws-sdk/client-sts","description":"AWS SDK for JavaScript Sts Client for Node.js, Browser and React Native","version":"3.922.0","scripts":{"build":"concurrently \'yarn:build:cjs\' \'yarn:build:es\' \'yarn:build:types\'","build:cjs":"node ../../scripts/compilation/inline client-sts","build:es":"tsc -p tsconfig.es.json","build:include:deps":"lerna run --scope $npm_package_name --include-dependencies build","build:types":"rimraf ./dist-types tsconfig.types.tsbuildinfo && tsc -p tsconfig.types.json","build:types:downlevel":"downlevel-dts dist-types dist-types/ts3.4","clean":"rimraf ./dist-* && rimraf *.tsbuildinfo","extract:docs":"api-extractor run --local","generate:client":"node ../../scripts/generate-clients/single-service --solo sts","test":"yarn g:vitest run","test:watch":"yarn g:vitest watch"},"main":"./dist-cjs/index.js","types":"./dist-types/index.d.ts","module":"./dist-es/index.js","sideEffects":false,"dependencies":{"@aws-crypto/sha256-browser":"5.2.0","@aws-crypto/sha256-js":"5.2.0","@aws-sdk/core":"3.922.0","@aws-sdk/credential-provider-node":"3.922.0","@aws-sdk/middleware-host-header":"3.922.0","@aws-sdk/middleware-logger":"3.922.0","@aws-sdk/middleware-recursion-detection":"3.922.0","@aws-sdk/middleware-user-agent":"3.922.0","@aws-sdk/region-config-resolver":"3.922.0","@aws-sdk/types":"3.922.0","@aws-sdk/util-endpoints":"3.922.0","@aws-sdk/util-user-agent-browser":"3.922.0","@aws-sdk/util-user-agent-node":"3.922.0","@smithy/config-resolver":"^4.4.1","@smithy/core":"^3.17.2","@smithy/fetch-http-handler":"^5.3.5","@smithy/hash-node":"^4.2.4","@smithy/invalid-dependency":"^4.2.4","@smithy/middleware-content-length":"^4.2.4","@smithy/middleware-endpoint":"^4.3.6","@smithy/middleware-retry":"^4.4.6","@smithy/middleware-serde":"^4.2.4","@smithy/middleware-stack":"^4.2.4","@smithy/node-config-provider":"^4.3.4","@smithy/node-http-handler":"^4.4.4","@smithy/protocol-http":"^5.3.4","@smithy/smithy-client":"^4.9.2","@smithy/types":"^4.8.1","@smithy/url-parser":"^4.2.4","@smithy/util-base64":"^4.3.0","@smithy/util-body-length-browser":"^4.2.0","@smithy/util-body-length-node":"^4.2.1","@smithy/util-defaults-mode-browser":"^4.3.5","@smithy/util-defaults-mode-node":"^4.2.7","@smithy/util-endpoints":"^3.2.4","@smithy/util-middleware":"^4.2.4","@smithy/util-retry":"^4.2.4","@smithy/util-utf8":"^4.2.0","tslib":"^2.6.2"},"devDependencies":{"@tsconfig/node18":"18.2.4","@types/node":"^18.19.69","concurrently":"7.0.0","downlevel-dts":"0.10.1","rimraf":"3.0.2","typescript":"~5.8.3"},"engines":{"node":">=18.0.0"},"typesVersions":{"<4.0":{"dist-types/*":["dist-types/ts3.4/*"]}},"files":["dist-*/**"],"author":{"name":"AWS SDK for JavaScript Team","url":"https://aws.amazon.com/javascript/"},"license":"Apache-2.0","browser":{"./dist-es/runtimeConfig":"./dist-es/runtimeConfig.browser"},"react-native":{"./dist-es/runtimeConfig":"./dist-es/runtimeConfig.native"},"homepage":"https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-sts","repository":{"type":"git","url":"https://github.com/aws/aws-sdk-js-v3.git","directory":"clients/client-sts"}}');
 
 /***/ }),
 
