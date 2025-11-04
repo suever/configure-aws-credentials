@@ -60,39 +60,49 @@ export class CredentialsClient {
     roleChaining?: boolean,
     expectedAccountIds?: string[],
   ) {
+    info('Validating credentials');
     let credentials: AwsCredentialIdentity;
     try {
+      info('Loading credentials from SDK');
       credentials = await this.loadCredentials();
       if (!credentials.accessKeyId) {
         throw new Error('Access key ID empty after loading credentials');
       }
+      info(`Credentials loaded successfully (AccessKeyId: ${credentials.accessKeyId.substring(0, 4)}...)`);
     } catch (error) {
+      info(`Failed to load credentials: ${errorMessage(error)}`);
       throw new Error(`Credentials could not be loaded, please check your action inputs: ${errorMessage(error)}`);
     }
     if (expectedAccountIds && expectedAccountIds.length > 0 && expectedAccountIds[0] !== '') {
+      info(`Validating account ID against allowed list: ${expectedAccountIds.join(', ')}`);
       let callerIdentity: Awaited<ReturnType<typeof getCallerIdentity>>;
       try {
+        info('Calling GetCallerIdentity for account validation');
         callerIdentity = await getCallerIdentity(this.stsClient);
+        info(`GetCallerIdentity returned account: ${callerIdentity.Account}`);
       } catch (error) {
+        info(`GetCallerIdentity failed: ${errorMessage(error)}`);
         throw new Error(`Could not validate account ID of credentials: ${errorMessage(error)}`);
       }
       if (!callerIdentity.Account || !expectedAccountIds.includes(callerIdentity.Account)) {
-        throw new Error(
-          `The account ID of the provided credentials (${
-            callerIdentity.Account ?? 'unknown'
-          }) does not match any of the expected account IDs: ${expectedAccountIds.join(', ')}`,
-        );
+        const errorMsg = `The account ID of the provided credentials (${
+          callerIdentity.Account ?? 'unknown'
+        }) does not match any of the expected account IDs: ${expectedAccountIds.join(', ')}`;
+        info(errorMsg);
+        throw new Error(errorMsg);
       }
+      info('Account ID validation successful');
     }
 
     if (!roleChaining) {
       const actualAccessKeyId = credentials.accessKeyId;
       if (expectedAccessKeyId && expectedAccessKeyId !== actualAccessKeyId) {
-        throw new Error(
-          'Credentials loaded by the SDK do not match the expected access key ID configured by the action',
-        );
+        const errorMsg = 'Credentials loaded by the SDK do not match the expected access key ID configured by the action';
+        info(`Access key validation failed: expected ${expectedAccessKeyId?.substring(0, 4)}..., got ${actualAccessKeyId.substring(0, 4)}...`);
+        throw new Error(errorMsg);
       }
     }
+    info('Credential validation completed successfully');
   }
 
   private async loadCredentials() {

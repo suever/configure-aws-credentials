@@ -10,6 +10,9 @@ import { errorMessage, isDefined, sanitizeGitHubVariables } from './helpers';
 async function assumeRoleWithOIDC(params: AssumeRoleCommandInput, client: STSClient, webIdentityToken: string) {
   delete params.Tags;
   core.info('Assuming role with OIDC');
+  core.debug(`Role ARN: ${params.RoleArn}`);
+  core.debug(`Session Name: ${params.RoleSessionName}`);
+  core.debug(`Duration: ${params.DurationSeconds}`);
   try {
     const creds = await client.send(
       new AssumeRoleWithWebIdentityCommand({
@@ -17,8 +20,11 @@ async function assumeRoleWithOIDC(params: AssumeRoleCommandInput, client: STSCli
         WebIdentityToken: webIdentityToken,
       }),
     );
+    core.debug(`AssumeRoleWithWebIdentity successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
     return creds;
   } catch (error) {
+    core.error(`AssumeRoleWithWebIdentity failed: ${errorMessage(error)}`);
+    core.error(`Role ARN: ${params.RoleArn}`);
     throw new Error(`Could not assume role with OIDC: ${errorMessage(error)}`);
   }
 }
@@ -35,10 +41,15 @@ async function assumeRoleWithWebIdentityTokenFile(
   const webIdentityTokenFilePath = path.isAbsolute(webIdentityTokenFile)
     ? webIdentityTokenFile
     : path.join(workspace, webIdentityTokenFile);
+  core.debug(`Web identity token file path: ${webIdentityTokenFilePath}`);
   if (!fs.existsSync(webIdentityTokenFilePath)) {
+    core.error(`Web identity token file does not exist: ${webIdentityTokenFilePath}`);
     throw new Error(`Web identity token file does not exist: ${webIdentityTokenFilePath}`);
   }
   core.info('Assuming role with web identity token file');
+  core.debug(`Role ARN: ${params.RoleArn}`);
+  core.debug(`Session Name: ${params.RoleSessionName}`);
+  core.debug(`Duration: ${params.DurationSeconds}`);
   try {
     const webIdentityToken = fs.readFileSync(webIdentityTokenFilePath, 'utf8');
     delete params.Tags;
@@ -48,18 +59,30 @@ async function assumeRoleWithWebIdentityTokenFile(
         WebIdentityToken: webIdentityToken,
       }),
     );
+    core.debug(`AssumeRoleWithWebIdentity successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
     return creds;
   } catch (error) {
+    core.error(`AssumeRoleWithWebIdentity (token file) failed: ${errorMessage(error)}`);
+    core.error(`Role ARN: ${params.RoleArn}`);
+    core.error(`Token file path: ${webIdentityTokenFilePath}`);
     throw new Error(`Could not assume role with web identity token file: ${errorMessage(error)}`);
   }
 }
 
 async function assumeRoleWithCredentials(params: AssumeRoleCommandInput, client: STSClient) {
   core.info('Assuming role with user credentials');
+  core.debug(`Role ARN: ${params.RoleArn}`);
+  core.debug(`Session Name: ${params.RoleSessionName}`);
+  core.debug(`Duration: ${params.DurationSeconds}`);
+  core.debug(`External ID: ${params.ExternalId || 'not provided'}`);
   try {
     const creds = await client.send(new AssumeRoleCommand({ ...params }));
+    core.debug(`AssumeRole successful - AssumedRoleId: ${creds.AssumedRoleUser?.AssumedRoleId}`);
     return creds;
   } catch (error) {
+    core.error(`AssumeRole failed: ${errorMessage(error)}`);
+    core.error(`Role ARN: ${params.RoleArn}`);
+    core.error(`External ID: ${params.ExternalId || 'not provided'}`);
     throw new Error(`Could not assume role with user credentials: ${errorMessage(error)}`);
   }
 }
@@ -70,7 +93,7 @@ export interface assumeRoleParams {
   roleDuration: number;
   roleSessionName: string;
   roleSkipSessionTagging?: boolean;
-  sourceAccountId?: string;
+  sourceAccountId?: string | undefined;
   roleExternalId?: string;
   webIdentityTokenFile?: string;
   webIdentityToken?: string;

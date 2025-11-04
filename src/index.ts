@@ -22,6 +22,8 @@ const REGION_REGEX = /^[a-z0-9-]+$/g;
 export async function run() {
   try {
     translateEnvVariables();
+    core.debug('=== Starting configure-aws-credentials action ===');
+
     // Get inputs
     // Undefined inputs are empty strings ( or empty arrays)
     const AccessKeyId = core.getInput('aws-access-key-id', { required: false });
@@ -61,6 +63,34 @@ export async function run() {
     const skipCredentialValidation = getBooleanInput('skip-credential-validation', { required: false });
     const noProxy = core.getInput('no-proxy', { required: false });
     const globalTimeout = Number.parseInt(core.getInput('action-timeout-s', { required: false })) || 0;
+
+    // Debug log all inputs (except sensitive ones)
+    core.debug(`Input: aws-region=${region}`);
+    core.debug(`Input: aws-account-id=${providedAccountId || 'not provided'}`);
+    core.debug(`Input: role-to-assume=${roleToAssume || 'not provided'}`);
+    core.debug(`Input: role-chaining=${roleChaining}`);
+    core.debug(`Input: role-duration-seconds=${roleDuration}`);
+    core.debug(`Input: role-session-name=${roleSessionName}`);
+    core.debug(`Input: role-skip-session-tagging=${roleSkipSessionTagging}`);
+    core.debug(`Input: audience=${audience || 'not provided'}`);
+    core.debug(`Input: web-identity-token-file=${webIdentityTokenFile || 'not provided'}`);
+    core.debug(`Input: mask-aws-account-id=${maskAccountId}`);
+    core.debug(`Input: output-credentials=${outputCredentials}`);
+    core.debug(`Input: output-env-credentials=${outputEnvCredentials}`);
+    core.debug(`Input: unset-current-credentials=${unsetCurrentCredentials}`);
+    core.debug(`Input: disable-retry=${disableRetry}`);
+    core.debug(`Input: retry-max-attempts=${maxRetries}`);
+    core.debug(`Input: special-characters-workaround=${specialCharacterWorkaround}`);
+    core.debug(`Input: use-existing-credentials=${useExistingCredentials || 'not provided'}`);
+    core.debug(`Input: allowed-account-ids=${expectedAccountIds.filter(id => id !== '').join(', ') || 'not provided'}`);
+    core.debug(`Input: force-skip-oidc=${forceSkipOidc}`);
+    core.debug(`Input: skip-credential-validation=${skipCredentialValidation}`);
+    core.debug(`Input: http-proxy=${proxyServer ? 'configured' : 'not configured'}`);
+    core.debug(`Input: no-proxy=${noProxy || 'not provided'}`);
+    core.debug(`Input: action-timeout-s=${globalTimeout}`);
+    core.debug(`Input: aws-access-key-id=${AccessKeyId ? 'provided' : 'not provided'}`);
+    core.debug(`Input: aws-secret-access-key=${SecretAccessKey ? 'provided' : 'not provided'}`);
+    core.debug(`Input: aws-session-token=${SessionToken ? 'provided' : 'not provided'}`);
 
     let timeoutId: NodeJS.Timeout | undefined;
     if (globalTimeout > 0) {
@@ -127,7 +157,7 @@ export async function run() {
     if (proxyServer) clientProps.proxyServer = proxyServer;
     if (noProxy) clientProps.noProxy = noProxy;
     const credentialsClient = new CredentialsClient(clientProps);
-    let sourceAccountId: string;
+    let sourceAccountId: string | undefined;
     let webIdentityToken: string;
 
     //if the user wants to attempt to use existing credentials, check if we have some already
@@ -166,45 +196,81 @@ export async function run() {
       exportCredentials({ AccessKeyId, SecretAccessKey, SessionToken }, outputCredentials, outputEnvCredentials);
     } else if (!webIdentityTokenFile && !roleChaining) {
       // Proceed only if credentials can be picked up
+      core.debug('Validating credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
       if (!skipCredentialValidation) {
-        await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
+        core.debug('Running validateCredentials()');
+        try {
+          await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
+          core.debug('Credential validation successful');
+        } catch (error) {
+          core.error(`Credential validation failed: ${errorMessage(error)}`);
+          throw error;
+        }
+      } else {
+        core.debug('Skipping credential validation due to skip-credential-validation flag');
       }
+      core.debug('Exporting account ID');
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
+      core.debug(`Account ID exported: ${sourceAccountId}`);
     }
 
     if (AccessKeyId || roleChaining) {
       // Validate that the SDK can actually pick up credentials.
       // This validates cases where this action is using existing environment credentials,
       // and cases where the user intended to provide input credentials but the secrets inputs resolved to empty strings.
+      core.debug(`Validating credentials (AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'}, roleChaining=${roleChaining})`);
       if (!skipCredentialValidation) {
-        await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
+        core.debug('Running validateCredentials()');
+        try {
+          await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
+          core.debug('Credential validation successful');
+        } catch (error) {
+          core.error(`Credential validation failed: ${errorMessage(error)}`);
+          throw error;
+        }
+      } else {
+        core.debug('Skipping credential validation due to skip-credential-validation flag');
       }
+      core.debug('Exporting account ID');
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
+      core.debug(`Account ID exported: ${sourceAccountId}`);
     }
 
     // Get role credentials if configured to do so
     if (roleToAssume) {
+      core.debug(`Attempting to assume role: ${roleToAssume}`);
       let roleCredentials: AssumeRoleCommandOutput;
       do {
-        roleCredentials = await retryAndBackoff(
-          async () => {
-            return assumeRole({
-              credentialsClient,
-              sourceAccountId,
-              roleToAssume,
-              roleExternalId,
-              roleDuration,
-              roleSessionName,
-              roleSkipSessionTagging,
-              webIdentityTokenFile,
-              webIdentityToken,
-              inlineSessionPolicy,
-              managedSessionPolicies,
-            });
-          },
-          !disableRetry,
-          maxRetries,
-        );
+        try {
+          roleCredentials = await retryAndBackoff(
+            async () => {
+              core.debug('Calling assumeRole()');
+              return assumeRole({
+                credentialsClient,
+                sourceAccountId,
+                roleToAssume,
+                roleExternalId,
+                roleDuration,
+                roleSessionName,
+                roleSkipSessionTagging,
+                webIdentityTokenFile,
+                webIdentityToken,
+                inlineSessionPolicy,
+                managedSessionPolicies,
+              });
+            },
+            !disableRetry,
+            maxRetries,
+          );
+          core.debug('AssumeRole successful');
+        } catch (error) {
+          core.error(`AssumeRole failed: ${errorMessage(error)}`);
+          core.error(`Role: ${roleToAssume}`);
+          core.error(`Source Account ID: ${sourceAccountId || 'undefined'}`);
+          core.error(`Role Duration: ${roleDuration}`);
+          core.error(`Role Session Name: ${roleSessionName}`);
+          throw error;
+        }
       } while (specialCharacterWorkaround && !verifyKeys(roleCredentials.Credentials));
       core.info(`Authenticated as assumedRoleId ${roleCredentials.AssumedRoleUser?.AssumedRoleId}`);
       exportCredentials(roleCredentials.Credentials, outputCredentials, outputEnvCredentials);
@@ -212,14 +278,26 @@ export async function run() {
       // First: self-hosted runners. If the GITHUB_ACTIONS environment variable
       //  is set to `true` then we are NOT in a self-hosted runner.
       // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
-      if (!skipCredentialValidation && (!process.env.GITHUB_ACTIONS || AccessKeyId)) {
-        await credentialsClient.validateCredentials(
-          roleCredentials.Credentials?.AccessKeyId,
-          roleChaining,
-          expectedAccountIds,
-        );
+      const shouldValidate = !skipCredentialValidation && (!process.env.GITHUB_ACTIONS || AccessKeyId);
+      core.debug(`Should validate assumed role credentials: ${shouldValidate} (skipCredentialValidation=${skipCredentialValidation}, GITHUB_ACTIONS=${process.env.GITHUB_ACTIONS}, AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'})`);
+      if (shouldValidate) {
+        core.debug('Running validateCredentials() for assumed role');
+        try {
+          await credentialsClient.validateCredentials(
+            roleCredentials.Credentials?.AccessKeyId,
+            roleChaining,
+            expectedAccountIds,
+          );
+          core.debug('Assumed role credential validation successful');
+        } catch (error) {
+          core.error(`Assumed role credential validation failed: ${errorMessage(error)}`);
+          throw error;
+        }
+      } else {
+        core.debug('Skipping assumed role credential validation');
       }
       if (outputEnvCredentials) {
+        core.debug('Exporting account ID for assumed role');
         await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
       }
     } else {
