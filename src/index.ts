@@ -22,7 +22,7 @@ const REGION_REGEX = /^[a-z0-9-]+$/g;
 export async function run() {
   try {
     translateEnvVariables();
-    core.debug('=== Starting configure-aws-credentials action ===');
+    core.info('=== Starting configure-aws-credentials action ===');
 
     // Get inputs
     // Undefined inputs are empty strings ( or empty arrays)
@@ -64,33 +64,33 @@ export async function run() {
     const noProxy = core.getInput('no-proxy', { required: false });
     const globalTimeout = Number.parseInt(core.getInput('action-timeout-s', { required: false })) || 0;
 
-    // Debug log all inputs (except sensitive ones)
-    core.debug(`Input: aws-region=${region}`);
-    core.debug(`Input: aws-account-id=${providedAccountId || 'not provided'}`);
-    core.debug(`Input: role-to-assume=${roleToAssume || 'not provided'}`);
-    core.debug(`Input: role-chaining=${roleChaining}`);
-    core.debug(`Input: role-duration-seconds=${roleDuration}`);
-    core.debug(`Input: role-session-name=${roleSessionName}`);
-    core.debug(`Input: role-skip-session-tagging=${roleSkipSessionTagging}`);
-    core.debug(`Input: audience=${audience || 'not provided'}`);
-    core.debug(`Input: web-identity-token-file=${webIdentityTokenFile || 'not provided'}`);
-    core.debug(`Input: mask-aws-account-id=${maskAccountId}`);
-    core.debug(`Input: output-credentials=${outputCredentials}`);
-    core.debug(`Input: output-env-credentials=${outputEnvCredentials}`);
-    core.debug(`Input: unset-current-credentials=${unsetCurrentCredentials}`);
-    core.debug(`Input: disable-retry=${disableRetry}`);
-    core.debug(`Input: retry-max-attempts=${maxRetries}`);
-    core.debug(`Input: special-characters-workaround=${specialCharacterWorkaround}`);
-    core.debug(`Input: use-existing-credentials=${useExistingCredentials || 'not provided'}`);
-    core.debug(`Input: allowed-account-ids=${expectedAccountIds.filter(id => id !== '').join(', ') || 'not provided'}`);
-    core.debug(`Input: force-skip-oidc=${forceSkipOidc}`);
-    core.debug(`Input: skip-credential-validation=${skipCredentialValidation}`);
-    core.debug(`Input: http-proxy=${proxyServer ? 'configured' : 'not configured'}`);
-    core.debug(`Input: no-proxy=${noProxy || 'not provided'}`);
-    core.debug(`Input: action-timeout-s=${globalTimeout}`);
-    core.debug(`Input: aws-access-key-id=${AccessKeyId ? 'provided' : 'not provided'}`);
-    core.debug(`Input: aws-secret-access-key=${SecretAccessKey ? 'provided' : 'not provided'}`);
-    core.debug(`Input: aws-session-token=${SessionToken ? 'provided' : 'not provided'}`);
+    // Log all inputs (except sensitive ones)
+    core.info(`Input: aws-region=${region}`);
+    core.info(`Input: aws-account-id=${providedAccountId || 'not provided'}`);
+    core.info(`Input: role-to-assume=${roleToAssume || 'not provided'}`);
+    core.info(`Input: role-chaining=${roleChaining}`);
+    core.info(`Input: role-duration-seconds=${roleDuration}`);
+    core.info(`Input: role-session-name=${roleSessionName}`);
+    core.info(`Input: role-skip-session-tagging=${roleSkipSessionTagging}`);
+    core.info(`Input: audience=${audience || 'not provided'}`);
+    core.info(`Input: web-identity-token-file=${webIdentityTokenFile || 'not provided'}`);
+    core.info(`Input: mask-aws-account-id=${maskAccountId}`);
+    core.info(`Input: output-credentials=${outputCredentials}`);
+    core.info(`Input: output-env-credentials=${outputEnvCredentials}`);
+    core.info(`Input: unset-current-credentials=${unsetCurrentCredentials}`);
+    core.info(`Input: disable-retry=${disableRetry}`);
+    core.info(`Input: retry-max-attempts=${maxRetries}`);
+    core.info(`Input: special-characters-workaround=${specialCharacterWorkaround}`);
+    core.info(`Input: use-existing-credentials=${useExistingCredentials || 'not provided'}`);
+    core.info(`Input: allowed-account-ids=${expectedAccountIds.filter(id => id !== '').join(', ') || 'not provided'}`);
+    core.info(`Input: force-skip-oidc=${forceSkipOidc}`);
+    core.info(`Input: skip-credential-validation=${skipCredentialValidation}`);
+    core.info(`Input: http-proxy=${proxyServer ? 'configured' : 'not configured'}`);
+    core.info(`Input: no-proxy=${noProxy || 'not provided'}`);
+    core.info(`Input: action-timeout-s=${globalTimeout}`);
+    core.info(`Input: aws-access-key-id=${AccessKeyId ? 'provided' : 'not provided'}`);
+    core.info(`Input: aws-secret-access-key=${SecretAccessKey ? 'provided' : 'not provided'}`);
+    core.info(`Input: aws-session-token=${SessionToken ? 'provided' : 'not provided'}`);
 
     let timeoutId: NodeJS.Timeout | undefined;
     if (globalTimeout > 0) {
@@ -196,55 +196,55 @@ export async function run() {
       exportCredentials({ AccessKeyId, SecretAccessKey, SessionToken }, outputCredentials, outputEnvCredentials);
     } else if (!webIdentityTokenFile && !roleChaining) {
       // Proceed only if credentials can be picked up
-      core.debug('Validating credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
+      core.info('Validating credentials (no AccessKeyId, no webIdentityTokenFile, no roleChaining)');
       if (!skipCredentialValidation) {
-        core.debug('Running validateCredentials()');
+        core.info('Running validateCredentials()');
         try {
           await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
-          core.debug('Credential validation successful');
+          core.info('Credential validation successful');
         } catch (error) {
           core.error(`Credential validation failed: ${errorMessage(error)}`);
           throw error;
         }
       } else {
-        core.debug('Skipping credential validation due to skip-credential-validation flag');
+        core.info('Skipping credential validation due to skip-credential-validation flag');
       }
-      core.debug('Exporting account ID');
+      core.info('Exporting account ID');
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
-      core.debug(`Account ID exported: ${sourceAccountId}`);
+      core.info(`Account ID exported: ${sourceAccountId}`);
     }
 
     if (AccessKeyId || roleChaining) {
       // Validate that the SDK can actually pick up credentials.
       // This validates cases where this action is using existing environment credentials,
       // and cases where the user intended to provide input credentials but the secrets inputs resolved to empty strings.
-      core.debug(`Validating credentials (AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'}, roleChaining=${roleChaining})`);
+      core.info(`Validating credentials (AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'}, roleChaining=${roleChaining})`);
       if (!skipCredentialValidation) {
-        core.debug('Running validateCredentials()');
+        core.info('Running validateCredentials()');
         try {
           await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
-          core.debug('Credential validation successful');
+          core.info('Credential validation successful');
         } catch (error) {
           core.error(`Credential validation failed: ${errorMessage(error)}`);
           throw error;
         }
       } else {
-        core.debug('Skipping credential validation due to skip-credential-validation flag');
+        core.info('Skipping credential validation due to skip-credential-validation flag');
       }
-      core.debug('Exporting account ID');
+      core.info('Exporting account ID');
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
-      core.debug(`Account ID exported: ${sourceAccountId}`);
+      core.info(`Account ID exported: ${sourceAccountId}`);
     }
 
     // Get role credentials if configured to do so
     if (roleToAssume) {
-      core.debug(`Attempting to assume role: ${roleToAssume}`);
+      core.info(`Attempting to assume role: ${roleToAssume}`);
       let roleCredentials: AssumeRoleCommandOutput;
       do {
         try {
           roleCredentials = await retryAndBackoff(
             async () => {
-              core.debug('Calling assumeRole()');
+              core.info('Calling assumeRole()');
               return assumeRole({
                 credentialsClient,
                 sourceAccountId,
@@ -262,7 +262,7 @@ export async function run() {
             !disableRetry,
             maxRetries,
           );
-          core.debug('AssumeRole successful');
+          core.info('AssumeRole successful');
         } catch (error) {
           core.error(`AssumeRole failed: ${errorMessage(error)}`);
           core.error(`Role: ${roleToAssume}`);
@@ -279,25 +279,25 @@ export async function run() {
       //  is set to `true` then we are NOT in a self-hosted runner.
       // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
       const shouldValidate = !skipCredentialValidation && (!process.env.GITHUB_ACTIONS || AccessKeyId);
-      core.debug(`Should validate assumed role credentials: ${shouldValidate} (skipCredentialValidation=${skipCredentialValidation}, GITHUB_ACTIONS=${process.env.GITHUB_ACTIONS}, AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'})`);
+      core.info(`Should validate assumed role credentials: ${shouldValidate} (skipCredentialValidation=${skipCredentialValidation}, GITHUB_ACTIONS=${process.env.GITHUB_ACTIONS}, AccessKeyId=${AccessKeyId ? 'provided' : 'not provided'})`);
       if (shouldValidate) {
-        core.debug('Running validateCredentials() for assumed role');
+        core.info('Running validateCredentials() for assumed role');
         try {
           await credentialsClient.validateCredentials(
             roleCredentials.Credentials?.AccessKeyId,
             roleChaining,
             expectedAccountIds,
           );
-          core.debug('Assumed role credential validation successful');
+          core.info('Assumed role credential validation successful');
         } catch (error) {
           core.error(`Assumed role credential validation failed: ${errorMessage(error)}`);
           throw error;
         }
       } else {
-        core.debug('Skipping assumed role credential validation');
+        core.info('Skipping assumed role credential validation');
       }
       if (outputEnvCredentials) {
-        core.debug('Exporting account ID for assumed role');
+        core.info('Exporting account ID for assumed role');
         await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
       }
     } else {

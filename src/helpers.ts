@@ -138,16 +138,15 @@ export async function exportAccountId(
   if (providedAccountId) {
     // Use the provided account ID directly
     accountId = providedAccountId;
-    core.debug(`Using provided AWS account ID: ${accountId}`);
     core.info(`Using provided AWS account ID: ${accountId}`);
   } else {
     // Make STS call to retrieve account ID
-    core.debug('Calling GetCallerIdentity to retrieve account ID');
+    core.info('Calling GetCallerIdentity to retrieve account ID');
     try {
       const identity = await getCallerIdentity(credentialsClient.stsClient);
       accountId = identity.Account;
       arn = identity.Arn;
-      core.debug(`GetCallerIdentity successful - Account: ${accountId}, ARN: ${arn}`);
+      core.info(`GetCallerIdentity successful - Account: ${accountId}, ARN: ${arn}`);
     } catch (error) {
       core.error(`GetCallerIdentity failed: ${errorMessage(error)}`);
       throw error;
@@ -155,16 +154,16 @@ export async function exportAccountId(
   }
 
   if (maskAccountId) {
-    core.debug('Masking account ID and ARN as secrets');
+    core.info('Masking account ID and ARN as secrets');
     core.setSecret(accountId);
     if (arn) {
       core.setSecret(arn);
     }
   }
-  core.debug(`Setting output: aws-account-id=${accountId}`);
+  core.info(`Setting output: aws-account-id=${accountId}`);
   core.setOutput('aws-account-id', accountId);
   if (arn) {
-    core.debug(`Setting output: authenticated-arn=${arn}`);
+    core.info(`Setting output: authenticated-arn=${arn}`);
     core.setOutput('authenticated-arn', arn);
   }
   return accountId;
