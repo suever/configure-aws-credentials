@@ -58,6 +58,7 @@ export async function run() {
       .split(',')
       .map((s) => s.trim());
     const forceSkipOidc = getBooleanInput('force-skip-oidc', { required: false });
+    const skipCredentialValidation = getBooleanInput('skip-credential-validation', { required: false });
     const noProxy = core.getInput('no-proxy', { required: false });
     const globalTimeout = Number.parseInt(core.getInput('action-timeout-s', { required: false })) || 0;
 
@@ -165,7 +166,9 @@ export async function run() {
       exportCredentials({ AccessKeyId, SecretAccessKey, SessionToken }, outputCredentials, outputEnvCredentials);
     } else if (!webIdentityTokenFile && !roleChaining) {
       // Proceed only if credentials can be picked up
-      await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
+      if (!skipCredentialValidation) {
+        await credentialsClient.validateCredentials(undefined, roleChaining, expectedAccountIds);
+      }
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
     }
 
@@ -173,7 +176,9 @@ export async function run() {
       // Validate that the SDK can actually pick up credentials.
       // This validates cases where this action is using existing environment credentials,
       // and cases where the user intended to provide input credentials but the secrets inputs resolved to empty strings.
-      await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
+      if (!skipCredentialValidation) {
+        await credentialsClient.validateCredentials(AccessKeyId, roleChaining, expectedAccountIds);
+      }
       sourceAccountId = await exportAccountId(credentialsClient, maskAccountId, providedAccountId);
     }
 
@@ -207,7 +212,7 @@ export async function run() {
       // First: self-hosted runners. If the GITHUB_ACTIONS environment variable
       //  is set to `true` then we are NOT in a self-hosted runner.
       // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
-      if (!process.env.GITHUB_ACTIONS || AccessKeyId) {
+      if (!skipCredentialValidation && (!process.env.GITHUB_ACTIONS || AccessKeyId)) {
         await credentialsClient.validateCredentials(
           roleCredentials.Credentials?.AccessKeyId,
           roleChaining,

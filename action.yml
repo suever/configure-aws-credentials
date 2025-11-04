@@ -95,6 +95,9 @@ inputs:
   action-timeout-s:
     required: false
     description: A global timeout in seconds for the action. When the timeout is reached, the action immediately exits. The default is to run without a timeout.
+  skip-credential-validation:
+    required: false
+    description: When enabled, this option will skip credential validation that requires calling GetCallerIdentity. This is useful in environments where GetCallerIdentity is not permitted.
 
 outputs:
   aws-account-id:
